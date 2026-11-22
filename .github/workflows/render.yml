@@ -1,0 +1,50 @@
+name: Render Video
+
+on:
+  workflow_dispatch:
+    inputs:
+      quality:
+        description: "Kualitas ekspor"
+        type: choice
+        default: "1080p"
+        options:
+          - "2K"
+          - "1080p"
+          - "720p"
+      title:
+        description: "Teks judul"
+        default: "Halo Remotion"
+
+jobs:
+  render:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm install
+      - run: npx remotion browser ensure
+
+      - name: Render
+        env:
+          QUALITY: ${{ inputs.quality }}
+          TITLE: ${{ inputs.title }}
+        run: |
+          case "$QUALITY" in
+            "2K") SCALE=1 ;;
+            "1080p") SCALE=0.75 ;;
+            "720p") SCALE=0.5 ;;
+          esac
+          mkdir -p out
+          npx remotion render src/remotion/index.ts Main out/video.mp4 \
+            --scale=$SCALE \
+            --props="$(node -e 'console.log(JSON.stringify({title: process.env.TITLE, scale: 1}))')"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: frocksmotion-${{ inputs.quality }}
+          path: out/video.mp4
