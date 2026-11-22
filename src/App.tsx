@@ -11,7 +11,7 @@ export const App: React.FC = () => {
   const [title, setTitle] = useState("Halo Remotion");
 
   return (
-    <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>
+    <div style={{ padding: 12, paddingTop: "max(36px, env(safe-area-inset-top, 0px))", display: "flex", flexDirection: "column", gap: 12 }}>
       <Player
         component={Video}
         inputProps={{ title, scale: previewScale }}

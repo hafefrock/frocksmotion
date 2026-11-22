@@ -17,6 +17,7 @@ export const Video: React.FC<VideoProps> = ({ title, scale }) => {
           height: 1440,
           transform: `scale(${scale})`,
           transformOrigin: "top left",
+          flexShrink: 0,
           background: "linear-gradient(135deg, #1e3a8a, #3b82f6)",
           display: "flex",
           justifyContent: "center",
