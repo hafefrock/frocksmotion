@@ -1,21 +1,17 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlayerRef } from "@remotion/player";
+import { Icon } from "./icons";
 import { FPS, Layer } from "./types";
 
 const ZOOMS = [30, 60, 100, 160]; // piksel per detik
-const ROW_H = 34;
-const RULER_H = 26;
 
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 
-const label = (l: Layer) =>
-  l.type === "text" ? `T ${l.text || "(kosong)"}` : `${l.kind === "video" ? "▶" : "🖼"} ${l.name}`;
+export const kindClass = (l: Layer) => (l.type === "text" ? "k-text" : l.kind === "video" ? "k-video" : "k-image");
+export const layerName = (l: Layer) => (l.type === "text" ? l.text.split("\n")[0] || "(teks kosong)" : l.name);
 
-const barColor = (l: Layer) =>
-  l.type === "text" ? "#3b82f6" : l.kind === "video" ? "#7c3aed" : "#059669";
-
-// Garis merah penanda posisi putar. Terpisah supaya hanya bagian ini yang digambar ulang tiap frame.
+// Garis penanda posisi putar. Dipisah supaya hanya bagian ini yang digambar ulang tiap frame.
 const Playhead: React.FC<{ playerRef: React.RefObject<PlayerRef>; pps: number }> = ({ playerRef, pps }) => {
   const [frame, setFrame] = useState(0);
   useEffect(() => {
@@ -25,20 +21,7 @@ const Playhead: React.FC<{ playerRef: React.RefObject<PlayerRef>; pps: number }>
     p.addEventListener("frameupdate", onFrame);
     return () => p.removeEventListener("frameupdate", onFrame);
   }, [playerRef]);
-  return (
-    <div
-      style={{
-        position: "absolute",
-        top: 0,
-        bottom: 0,
-        left: (frame / FPS) * pps,
-        width: 2,
-        background: "#f87171",
-        pointerEvents: "none",
-        zIndex: 5,
-      }}
-    />
-  );
+  return <div className="tl-playhead" style={{ left: (frame / FPS) * pps }} />;
 };
 
 type Drag = {
@@ -114,28 +97,18 @@ export const Timeline: React.FC<{
   const ticks = Array.from({ length: Math.floor(duration) + 1 }, (_, i) => i);
 
   return (
-    <div>
-      <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 6, fontSize: 14 }}>
-        <span style={{ flex: 1 }}>
-          Timeline <small style={{ opacity: 0.7 }}>(geser batang = pindah, ujung kanan = durasi, ketuk penggaris = loncat)</small>
-        </span>
-        <button onClick={() => zoom(-1)} style={zoomBtn}>
-          −
-        </button>
-        <button onClick={() => zoom(1)} style={zoomBtn}>
-          +
-        </button>
-      </div>
-
-      <div style={{ overflow: "auto", maxHeight: 250, border: "1px solid #334155", borderRadius: 8, background: "#0f172a" }}>
+    <div className="tl">
+      <div className="tl-scroll">
         <div
-          style={{ position: "relative", width: duration * pps + 40 }}
+          className="tl-track"
+          style={{ width: duration * pps + 40, minWidth: "100%" }}
           onPointerMove={onTrackMove}
           onPointerUp={endDrag}
           onPointerCancel={endDrag}
         >
           <div
-            style={{ position: "relative", height: RULER_H, width: duration * pps, touchAction: "none", borderBottom: "1px solid #334155" }}
+            className="tl-ruler"
+            style={{ width: duration * pps }}
             onPointerDown={(e) => {
               (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
               seekFromEvent(e);
@@ -145,53 +118,23 @@ export const Timeline: React.FC<{
             }}
           >
             {ticks.map((i) => (
-              <div
-                key={i}
-                style={{ position: "absolute", left: i * pps, top: 0, bottom: 0, borderLeft: "1px solid #475569", fontSize: 11, paddingLeft: 3, color: "#94a3b8", pointerEvents: "none" }}
-              >
+              <div key={i} className="tl-tick" style={{ left: i * pps }}>
                 {i % labelEvery === 0 ? `${i}s` : ""}
               </div>
             ))}
           </div>
 
+          {layers.length === 0 && <div className="tl-empty">Belum ada layer. Tambahkan teks atau gambar/video.</div>}
+
           {layers.map((l) => (
-            <div key={l.id} style={{ position: "relative", height: ROW_H, margin: "4px 0" }}>
+            <div key={l.id} className="tl-row">
               <div
+                className={`tl-bar ${kindClass(l)}${l.id === selectedId ? " sel" : ""}`}
+                style={{ left: l.start * pps, width: Math.max(26, l.duration * pps) }}
                 onPointerDown={(e) => startDrag(e, l, "move")}
-                style={{
-                  position: "absolute",
-                  left: l.start * pps,
-                  width: Math.max(14, l.duration * pps),
-                  top: 0,
-                  bottom: 0,
-                  background: barColor(l),
-                  borderRadius: 6,
-                  border: l.id === selectedId ? "2px solid #fde047" : "2px solid transparent",
-                  boxSizing: "border-box",
-                  touchAction: "none",
-                  overflow: "hidden",
-                  whiteSpace: "nowrap",
-                  textOverflow: "ellipsis",
-                  fontSize: 12,
-                  lineHeight: `${ROW_H - 4}px`,
-                  paddingLeft: 6,
-                  paddingRight: 22,
-                  color: "white",
-                }}
               >
-                {label(l)}
-                <div
-                  onPointerDown={(e) => startDrag(e, l, "resize")}
-                  style={{
-                    position: "absolute",
-                    right: 0,
-                    top: 0,
-                    bottom: 0,
-                    width: 20,
-                    background: "rgba(255,255,255,0.35)",
-                    touchAction: "none",
-                  }}
-                />
+                {layerName(l)}
+                <div className="tl-handle" onPointerDown={(e) => startDrag(e, l, "resize")} />
               </div>
             </div>
           ))}
@@ -199,16 +142,18 @@ export const Timeline: React.FC<{
           <Playhead playerRef={playerRef} pps={pps} />
         </div>
       </div>
+
+      <div className="section-head">
+        <p className="tl-hint">Geser batang untuk pindah. Tarik ujung kanan untuk durasi.</p>
+        <div className="row">
+          <button className="icon-btn sm" aria-label="Perkecil timeline" onClick={() => zoom(-1)}>
+            <Icon name="minus" size={18} />
+          </button>
+          <button className="icon-btn sm" aria-label="Perbesar timeline" onClick={() => zoom(1)}>
+            <Icon name="plus" size={18} />
+          </button>
+        </div>
+      </div>
     </div>
   );
-};
-
-const zoomBtn: React.CSSProperties = {
-  width: 38,
-  height: 34,
-  borderRadius: 8,
-  border: "none",
-  background: "#1f2937",
-  color: "white",
-  fontSize: 18,
 };

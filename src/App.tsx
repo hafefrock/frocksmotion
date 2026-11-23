@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Player, PlayerRef } from "@remotion/player";
-import { Timeline } from "./Timeline";
+import { Icon } from "./icons";
+import { Timeline, kindClass, layerName } from "./Timeline";
 import { Video } from "./Video";
 import {
   deleteFile,
@@ -16,27 +17,12 @@ import { FPS, FULL_H, FULL_W, Layer, MediaLayer, Project, TextLayer, defaultProj
 const PREVIEW_H = 360; // live preview 360p
 const previewScale = PREVIEW_H / FULL_H; // 0.25
 
+const SWATCHES = ["#FFFFFF", "#FFB84D", "#FF4F8B", "#34C6B4", "#9A8CFF", "#1F2937"];
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 const half = (n: number) => Math.max(0.5, Math.round(n * 2) / 2);
 
-const box: React.CSSProperties = {
-  padding: 10,
-  fontSize: 16,
-  borderRadius: 8,
-  border: "1px solid #334155",
-  background: "#111827",
-  color: "inherit",
-  width: "100%",
-  boxSizing: "border-box",
-};
-const btn: React.CSSProperties = {
-  padding: "10px 14px",
-  borderRadius: 8,
-  border: "none",
-  background: "#3b82f6",
-  color: "white",
-  fontSize: 15,
-};
+type Tab = "isi" | "posisi" | "waktu";
 
 const Slider: React.FC<{
   label: string;
@@ -44,18 +30,25 @@ const Slider: React.FC<{
   min: number;
   max: number;
   step?: number;
+  unit?: string;
   onChange: (v: number) => void;
-}> = ({ label, value, min, max, step = 1, onChange }) => (
-  <label style={{ display: "block", fontSize: 14 }}>
-    {label}: <b>{value}</b>
+}> = ({ label, value, min, max, step = 1, unit = "", onChange }) => (
+  <label className="field">
+    <span className="field-row">
+      <span>{label}</span>
+      <output>
+        {value}
+        {unit}
+      </output>
+    </span>
     <input
       type="range"
       min={min}
       max={max}
       step={step}
       value={value}
+      style={{ "--p": `${max > min ? ((value - min) / (max - min)) * 100 : 0}%` } as React.CSSProperties}
       onChange={(e) => onChange(Number(e.target.value))}
-      style={{ width: "100%" }}
     />
   </label>
 );
@@ -69,17 +62,16 @@ const readVideoDuration = (url: string): Promise<number> =>
     v.src = url;
   });
 
-const chipLabel = (l: Layer, i: number) =>
-  l.type === "text"
-    ? `${i + 1}. T ${l.text.slice(0, 10) || "(kosong)"}`
-    : `${i + 1}. ${l.kind === "video" ? "▶" : "🖼"} ${l.name.slice(0, 12)}`;
-
 export const App: React.FC = () => {
   const [project, setProject] = useState<Project>(defaultProject);
   const [selectedId, setSelectedId] = useState(defaultProject.layers[0].id);
   const playerRef = useRef<PlayerRef>(null);
+  const exportRef = useRef<HTMLTextAreaElement>(null);
   const [loaded, setLoaded] = useState(false);
   const [importText, setImportText] = useState("");
+  const [tab, setTab] = useState<Tab>("isi");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [copied, setCopied] = useState(false);
   const selected = project.layers.find((l) => l.id === selectedId);
 
   // Muat proyek tersimpan saat app dibuka
@@ -107,11 +99,24 @@ export const App: React.FC = () => {
     return () => clearTimeout(t);
   }, [project, loaded]);
 
-  const updateLayer = (patch: Record<string, unknown>) =>
+  const patchLayer = (id: string, patch: Record<string, unknown>) =>
     setProject((p) => ({
       ...p,
-      layers: p.layers.map((l) => (l.id === selectedId ? ({ ...l, ...patch } as Layer) : l)),
+      layers: p.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)),
     }));
+
+  const updateLayer = (patch: Record<string, unknown>) => patchLayer(selectedId, patch);
+
+  const setDuration = (d: number) => {
+    const next = Math.min(60, Math.max(1, d));
+    setProject((p) => ({
+      duration: next,
+      layers: p.layers.map((l) => {
+        const start = Math.min(l.start, Math.max(0, next - 0.5));
+        return { ...l, start, duration: Math.max(0.5, Math.min(l.duration, next - start)) };
+      }),
+    }));
+  };
 
   const addText = () => {
     const layer: TextLayer = {
@@ -127,6 +132,7 @@ export const App: React.FC = () => {
     };
     setProject((p) => ({ ...p, layers: [...p.layers, layer] }));
     setSelectedId(layer.id);
+    setTab("isi");
   };
 
   const addMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -157,6 +163,7 @@ export const App: React.FC = () => {
     if (added.length === 0) return;
     setProject((p) => ({ ...p, layers: [...p.layers, ...added] }));
     setSelectedId(added[added.length - 1].id);
+    setTab("isi");
   };
 
   const removeLayer = () => {
@@ -178,6 +185,18 @@ export const App: React.FC = () => {
 
   const exportJson = serializeProject(project);
   const missingMedia = project.layers.filter((l) => l.type === "media" && !l.src);
+  const selectedIndex = project.layers.findIndex((l) => l.id === selectedId);
+
+  const copyExport = async () => {
+    try {
+      await navigator.clipboard.writeText(exportJson);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1800);
+    } catch {
+      exportRef.current?.select();
+      window.alert("Tekan lama kotak teks, lalu pilih Salin.");
+    }
+  };
 
   const newProject = () => {
     if (!window.confirm("Mulai proyek baru? Proyek saat ini akan dihapus dari hp.")) return;
@@ -186,178 +205,254 @@ export const App: React.FC = () => {
     });
     setProject(defaultProject);
     setSelectedId(defaultProject.layers[0].id);
+    setMenuOpen(false);
   };
 
   const importProject = () => {
     const p = parseProject(importText);
     if (!p) {
-      window.alert("Data proyek tidak valid.");
+      window.alert("Data proyek tidak valid. Pastikan yang ditempel utuh dan belum diubah.");
       return;
     }
     setProject(p);
     setSelectedId(p.layers[0]?.id ?? "");
     setImportText("");
+    setMenuOpen(false);
   };
 
   return (
-    <div
-      style={{
-        padding: 12,
-        paddingTop: "max(36px, env(safe-area-inset-top, 0px))",
-        display: "flex",
-        flexDirection: "column",
-        gap: 12,
-      }}
-    >
-      <Player
-        ref={playerRef}
-        component={Video}
-        inputProps={{ project, scale: previewScale }}
-        durationInFrames={Math.max(1, Math.round(project.duration * FPS))}
-        fps={FPS}
-        compositionWidth={Math.round(FULL_W * previewScale)}
-        compositionHeight={PREVIEW_H}
-        style={{ width: "100%", borderRadius: 8 }}
-        controls
-        loop
-      />
-
-      <Timeline
-        layers={project.layers}
-        duration={project.duration}
-        selectedId={selectedId}
-        onSelect={setSelectedId}
-        onChange={(id, patch) =>
-          setProject((p) => ({
-            ...p,
-            layers: p.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)),
-          }))
-        }
-        playerRef={playerRef}
-      />
-
-      <Slider
-        label="Durasi video (detik)"
-        value={project.duration}
-        min={1}
-        max={60}
-        onChange={(v) => setProject((p) => ({ ...p, duration: v }))}
-      />
-
-      {missingMedia.length > 0 && (
-        <div style={{ ...box, borderColor: "#f59e0b", fontSize: 14 }}>
-          {missingMedia.length} file belum ada di hp (misalnya setelah memuat data proyek). Pilih ulang lewat
-          "+ Gambar/Video" dengan nama file yang sama.
-        </div>
-      )}
-
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {project.layers.map((l, i) => (
-          <button
-            key={l.id}
-            onClick={() => setSelectedId(l.id)}
-            style={{ ...btn, background: l.id === selectedId ? "#3b82f6" : "#1f2937" }}
-          >
-            {chipLabel(l, i)}
-          </button>
-        ))}
-        <button onClick={addText} style={{ ...btn, background: "#059669" }}>
-          + Teks
+    <div className="app">
+      <header className="topbar">
+        <h1 className="brand">FROCKSMOTION</h1>
+        <button className="icon-btn" aria-label="Menu proyek" onClick={() => setMenuOpen(true)}>
+          <Icon name="more" />
         </button>
-        <label style={{ ...btn, background: "#059669", display: "inline-block" }}>
-          + Gambar/Video
-          <input type="file" accept="image/*,video/*" multiple onChange={addMedia} style={{ display: "none" }} />
-        </label>
+      </header>
+
+      <section>
+        <div className="stage">
+          <Player
+            ref={playerRef}
+            component={Video}
+            inputProps={{ project, scale: previewScale }}
+            durationInFrames={Math.max(1, Math.round(project.duration * FPS))}
+            fps={FPS}
+            compositionWidth={Math.round(FULL_W * previewScale)}
+            compositionHeight={PREVIEW_H}
+            style={{ width: "100%", display: "block" }}
+            controls
+            showVolumeControls={false}
+            loop
+          />
+        </div>
+      </section>
+
+      <div className="meta">
+        <span>Preview 360p</span>
+        <div className="stepper">
+          <span>Durasi</span>
+          <button className="icon-btn sm" aria-label="Kurangi durasi" onClick={() => setDuration(project.duration - 1)}>
+            <Icon name="minus" size={18} />
+          </button>
+          <output>{project.duration} dtk</output>
+          <button className="icon-btn sm" aria-label="Tambah durasi" onClick={() => setDuration(project.duration + 1)}>
+            <Icon name="plus" size={18} />
+          </button>
+        </div>
       </div>
 
+      <section className="tl" style={{ display: "grid", gap: 12 }}>
+        <div className="section-head">
+          <h2>Layer</h2>
+          <div className="row">
+            <button className="btn primary" onClick={addText}>
+              <Icon name="plus" size={18} />
+              Teks
+            </button>
+            <label className="btn">
+              <Icon name="media" size={18} />
+              Media
+              <input type="file" accept="image/*,video/*" multiple hidden onChange={addMedia} />
+            </label>
+          </div>
+        </div>
+
+        {missingMedia.length > 0 && (
+          <div className="banner">
+            {missingMedia.length} file belum ada di hp. Pilih ulang lewat tombol Media dengan nama file yang sama.
+          </div>
+        )}
+
+        <Timeline
+          layers={project.layers}
+          duration={project.duration}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onChange={patchLayer}
+          playerRef={playerRef}
+        />
+      </section>
+
       {selected && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={() => moveLayer(-1)} style={{ ...btn, background: "#1f2937" }}>
-              ◀ Ke bawah
-            </button>
-            <button onClick={() => moveLayer(1)} style={{ ...btn, background: "#1f2937" }}>
-              Ke atas ▶
-            </button>
+        <section className="panel">
+          <div className="panel-head">
+            <div className="panel-title">
+              <span className={`dot ${kindClass(selected)}`} />
+              <span className="name">{layerName(selected)}</span>
+            </div>
+            <div className="row">
+              <button
+                className="icon-btn sm"
+                aria-label="Naikkan urutan layer"
+                disabled={selectedIndex >= project.layers.length - 1}
+                onClick={() => moveLayer(1)}
+              >
+                <Icon name="up" size={18} />
+              </button>
+              <button
+                className="icon-btn sm"
+                aria-label="Turunkan urutan layer"
+                disabled={selectedIndex <= 0}
+                onClick={() => moveLayer(-1)}
+              >
+                <Icon name="down" size={18} />
+              </button>
+              <button className="icon-btn sm" aria-label="Hapus layer" onClick={removeLayer}>
+                <Icon name="trash" size={18} />
+              </button>
+            </div>
           </div>
 
-          {selected.type === "text" ? (
-            <>
-              <textarea
-                value={selected.text}
-                onChange={(e) => updateLayer({ text: e.target.value })}
-                rows={2}
-                style={box}
-              />
-              <Slider label="Ukuran huruf" value={selected.size} min={30} max={400} step={5} onChange={(v) => updateLayer({ size: v })} />
-              <label style={{ fontSize: 14 }}>
-                Warna:{" "}
-                <input type="color" value={selected.color} onChange={(e) => updateLayer({ color: e.target.value })} />
-              </label>
-            </>
-          ) : (
-            <>
-              <div style={{ fontSize: 14 }}>
-                File: <b>{selected.name}</b> ({selected.kind === "video" ? "video" : "gambar"})
-              </div>
-              <Slider label="Lebar" value={selected.width} min={100} max={FULL_W} step={20} onChange={(v) => updateLayer({ width: v })} />
-              {selected.kind === "video" && (
-                <Slider
-                  label="Potong awal klip (detik)"
-                  value={selected.trim}
-                  min={0}
-                  max={Math.max(0, Math.floor((selected.mediaDuration ?? 5) * 2) / 2)}
-                  step={0.5}
-                  onChange={(v) => updateLayer({ trim: v })}
+          <div className="tabs" role="tablist">
+            {(["isi", "posisi", "waktu"] as Tab[]).map((t) => (
+              <button key={t} role="tab" className="tab" aria-selected={tab === t} onClick={() => setTab(t)}>
+                {t === "isi" ? "Isi" : t === "posisi" ? "Posisi" : "Waktu"}
+              </button>
+            ))}
+          </div>
+
+          <div className="panel-body">
+            {tab === "isi" && selected.type === "text" && (
+              <>
+                <textarea
+                  className="input"
+                  rows={2}
+                  value={selected.text}
+                  onChange={(e) => updateLayer({ text: e.target.value })}
                 />
-              )}
-            </>
-          )}
+                <Slider label="Ukuran huruf" value={selected.size} min={30} max={400} step={5} onChange={(v) => updateLayer({ size: v })} />
+                <div className="field">
+                  <span className="field-row">
+                    <span>Warna</span>
+                  </span>
+                  <div className="swatches">
+                    {SWATCHES.map((c) => (
+                      <button
+                        key={c}
+                        className="swatch"
+                        aria-label={`Warna ${c}`}
+                        aria-pressed={selected.color.toLowerCase() === c.toLowerCase()}
+                        style={{ background: c }}
+                        onClick={() => updateLayer({ color: c })}
+                      />
+                    ))}
+                    <input
+                      className="swatch-custom"
+                      type="color"
+                      aria-label="Warna lain"
+                      value={selected.color}
+                      onChange={(e) => updateLayer({ color: e.target.value })}
+                    />
+                  </div>
+                </div>
+              </>
+            )}
 
-          <Slider label="Posisi X" value={selected.x} min={0} max={FULL_W} step={10} onChange={(v) => updateLayer({ x: v })} />
-          <Slider label="Posisi Y" value={selected.y} min={0} max={FULL_H} step={10} onChange={(v) => updateLayer({ y: v })} />
-          <Slider label="Mulai (detik)" value={selected.start} min={0} max={project.duration} step={0.5} onChange={(v) => updateLayer({ start: v })} />
-          <Slider label="Lama tampil (detik)" value={selected.duration} min={0.5} max={project.duration} step={0.5} onChange={(v) => updateLayer({ duration: v })} />
+            {tab === "isi" && selected.type === "media" && (
+              <>
+                <div className="file-info">
+                  <Icon name="media" />
+                  <span>
+                    {selected.name} ({selected.kind === "video" ? "video" : "gambar"})
+                  </span>
+                </div>
+                <Slider label="Lebar" value={selected.width} min={100} max={FULL_W} step={20} onChange={(v) => updateLayer({ width: v })} />
+                {selected.kind === "video" && (
+                  <Slider
+                    label="Potong awal klip"
+                    unit=" dtk"
+                    value={selected.trim}
+                    min={0}
+                    max={Math.max(0.5, Math.floor((selected.mediaDuration ?? 5) * 2) / 2)}
+                    step={0.5}
+                    onChange={(v) => updateLayer({ trim: v })}
+                  />
+                )}
+              </>
+            )}
 
-          <button onClick={removeLayer} style={{ ...btn, background: "#b91c1c" }}>
-            Hapus layer ini
-          </button>
-        </div>
+            {tab === "posisi" && (
+              <div className="grid2">
+                <Slider label="Posisi X" value={selected.x} min={0} max={FULL_W} step={10} onChange={(v) => updateLayer({ x: v })} />
+                <Slider label="Posisi Y" value={selected.y} min={0} max={FULL_H} step={10} onChange={(v) => updateLayer({ y: v })} />
+              </div>
+            )}
+
+            {tab === "waktu" && (
+              <div className="grid2">
+                <Slider label="Mulai" unit=" dtk" value={selected.start} min={0} max={project.duration} step={0.5} onChange={(v) => updateLayer({ start: v })} />
+                <Slider label="Lama tampil" unit=" dtk" value={selected.duration} min={0.5} max={project.duration} step={0.5} onChange={(v) => updateLayer({ duration: v })} />
+              </div>
+            )}
+          </div>
+        </section>
       )}
 
-      <details>
-        <summary style={{ fontSize: 15 }}>Data proyek untuk ekspor</summary>
-        <p style={{ fontSize: 13, opacity: 0.75 }}>
-          Tekan lama kotak di bawah, pilih Salin, lalu tempel ke kolom "project" di workflow Render Video.
-          Kalau ada gambar/video, unggah dulu file aslinya ke folder media/ di repo dengan nama yang sama persis
-          (hindari spasi di nama file).
-        </p>
-        <textarea readOnly value={exportJson} rows={6} style={{ ...box, fontSize: 12 }} />
-      </details>
+      {menuOpen && (
+        <div className="sheet-backdrop" onClick={() => setMenuOpen(false)}>
+          <div className="sheet" role="dialog" aria-label="Proyek" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head">
+              <h2 style={{ fontFamily: "var(--font-brand)", fontSize: 18 }}>Proyek</h2>
+              <button className="icon-btn sm" aria-label="Tutup" onClick={() => setMenuOpen(false)}>
+                <Icon name="close" size={18} />
+              </button>
+            </div>
 
-      <details>
-        <summary style={{ fontSize: 15 }}>Proyek: baru / muat dari data</summary>
-        <p style={{ fontSize: 13, opacity: 0.75 }}>
-          Proyek tersimpan otomatis di hp ini. Untuk memuat proyek dari data yang pernah disalin, tempel di sini.
-        </p>
-        <textarea
-          value={importText}
-          onChange={(e) => setImportText(e.target.value)}
-          placeholder='Tempel data proyek (JSON)'
-          rows={4}
-          style={{ ...box, fontSize: 12 }}
-        />
-        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
-          <button onClick={importProject} style={btn}>
-            Muat data
-          </button>
-          <button onClick={newProject} style={{ ...btn, background: "#b91c1c" }}>
-            Proyek baru
-          </button>
+            <div>
+              <h3>Data untuk ekspor</h3>
+              <p className="hint">
+                Salin, lalu tempel ke kolom project di workflow Render Video. Unggah dulu file gambar/video asli ke
+                folder media di repo dengan nama yang sama persis, tanpa spasi.
+              </p>
+              <textarea ref={exportRef} className="input" readOnly rows={4} value={exportJson} />
+              <button className="btn primary" style={{ marginTop: 10 }} onClick={copyExport}>
+                <Icon name={copied ? "check" : "copy"} size={18} />
+                {copied ? "Tersalin" : "Salin data"}
+              </button>
+            </div>
+
+            <div>
+              <h3>Muat dari data</h3>
+              <p className="hint">Proyek tersimpan otomatis di hp ini. Tempel data yang pernah disalin untuk memuatnya.</p>
+              <textarea
+                className="input"
+                rows={3}
+                placeholder="Tempel data proyek di sini"
+                value={importText}
+                onChange={(e) => setImportText(e.target.value)}
+              />
+              <button className="btn" style={{ marginTop: 10 }} onClick={importProject} disabled={!importText.trim()}>
+                Muat data
+              </button>
+            </div>
+
+            <button className="btn danger" onClick={newProject}>
+              <Icon name="trash" size={18} />
+              Proyek baru
+            </button>
+          </div>
         </div>
-      </details>
-
-      <small style={{ opacity: 0.7 }}>Preview 360p. Ekspor 2K / 1080p / 720p lewat GitHub Actions.</small>
+      )}
     </div>
   );
 };
