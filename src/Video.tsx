@@ -1,41 +1,59 @@
-import { AbsoluteFill, interpolate, useCurrentFrame } from "remotion";
+import { AbsoluteFill, Sequence, interpolate, useCurrentFrame } from "remotion";
+import { FPS, FULL_H, FULL_W, Project, TextLayer } from "./types";
 
-export type VideoProps = { title: string; scale: number };
+export type VideoProps = { project: Project; scale: number };
 
-// Desain selalu dalam ukuran 2560x1440. `scale` hanya mengecilkan hasil gambar
-// (dipakai untuk live preview 480p). Ekspor 1080p/720p memakai --scale dari CLI.
-export const Video: React.FC<VideoProps> = ({ title, scale }) => {
+const Layer: React.FC<{ layer: TextLayer }> = ({ layer }) => {
   const frame = useCurrentFrame();
-  const opacity = interpolate(frame, [0, 30], [0, 1], { extrapolateRight: "clamp" });
-  const y = interpolate(frame, [0, 30], [80, 0], { extrapolateRight: "clamp" });
-
+  const opacity = interpolate(frame, [0, 15], [0, 1], { extrapolateRight: "clamp" });
+  const dy = interpolate(frame, [0, 15], [40, 0], { extrapolateRight: "clamp" });
   return (
-    <AbsoluteFill>
-      <div
-        style={{
-          width: 2560,
-          height: 1440,
-          transform: `scale(${scale})`,
-          transformOrigin: "top left",
-          flexShrink: 0,
-          background: "linear-gradient(135deg, #1e3a8a, #3b82f6)",
-          display: "flex",
-          justifyContent: "center",
-          alignItems: "center",
-        }}
-      >
-        <h1
-          style={{
-            color: "white",
-            fontSize: 160,
-            fontFamily: "system-ui, sans-serif",
-            opacity,
-            transform: `translateY(${y}px)`,
-          }}
-        >
-          {title}
-        </h1>
-      </div>
-    </AbsoluteFill>
+    <div
+      style={{
+        position: "absolute",
+        left: layer.x,
+        top: layer.y,
+        transform: `translate(-50%, calc(-50% + ${dy}px))`,
+        opacity,
+        color: layer.color,
+        fontSize: layer.size,
+        fontFamily: "system-ui, sans-serif",
+        fontWeight: 700,
+        textAlign: "center",
+        whiteSpace: "pre-wrap",
+      }}
+    >
+      {layer.text}
+    </div>
   );
 };
+
+// Desain selalu di kanvas 2560x1440. `scale` mengecilkan hasil gambar
+// (live preview 360p). Ekspor 1080p/720p memakai --scale dari CLI.
+export const Video: React.FC<VideoProps> = ({ project, scale }) => (
+  <AbsoluteFill>
+    <div
+      style={{
+        position: "relative",
+        width: FULL_W,
+        height: FULL_H,
+        flexShrink: 0,
+        overflow: "hidden",
+        transform: `scale(${scale})`,
+        transformOrigin: "top left",
+        background: "linear-gradient(135deg, #1e3a8a, #3b82f6)",
+      }}
+    >
+      {project.layers.map((l) => (
+        <Sequence
+          key={l.id}
+          from={Math.round(l.start * FPS)}
+          durationInFrames={Math.max(1, Math.round(l.duration * FPS))}
+          layout="none"
+        >
+          <Layer layer={l} />
+        </Sequence>
+      ))}
+    </div>
+  </AbsoluteFill>
+);
