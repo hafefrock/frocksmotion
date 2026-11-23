@@ -1,5 +1,6 @@
-import { useEffect, useState } from "react";
-import { Player } from "@remotion/player";
+import { useEffect, useRef, useState } from "react";
+import { Player, PlayerRef } from "@remotion/player";
+import { Timeline } from "./Timeline";
 import { Video } from "./Video";
 import {
   deleteFile,
@@ -76,6 +77,7 @@ const chipLabel = (l: Layer, i: number) =>
 export const App: React.FC = () => {
   const [project, setProject] = useState<Project>(defaultProject);
   const [selectedId, setSelectedId] = useState(defaultProject.layers[0].id);
+  const playerRef = useRef<PlayerRef>(null);
   const [loaded, setLoaded] = useState(false);
   const [importText, setImportText] = useState("");
   const selected = project.layers.find((l) => l.id === selectedId);
@@ -208,6 +210,7 @@ export const App: React.FC = () => {
       }}
     >
       <Player
+        ref={playerRef}
         component={Video}
         inputProps={{ project, scale: previewScale }}
         durationInFrames={Math.max(1, Math.round(project.duration * FPS))}
@@ -217,6 +220,20 @@ export const App: React.FC = () => {
         style={{ width: "100%", borderRadius: 8 }}
         controls
         loop
+      />
+
+      <Timeline
+        layers={project.layers}
+        duration={project.duration}
+        selectedId={selectedId}
+        onSelect={setSelectedId}
+        onChange={(id, patch) =>
+          setProject((p) => ({
+            ...p,
+            layers: p.layers.map((l) => (l.id === id ? ({ ...l, ...patch } as Layer) : l)),
+          }))
+        }
+        playerRef={playerRef}
       />
 
       <Slider
