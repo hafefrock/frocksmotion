@@ -73,14 +73,14 @@ p {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: max(34px, env(safe-area-inset-top, 0px)) 14px 8px;
+  padding: max(34px, env(safe-area-inset-top, 0px)) 14px 6px;
 }
 
 .brand {
   font-family: var(--font-brand);
-  font-weight: 800;
-  font-size: 16px;
-  letter-spacing: 0.01em;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 0.02em;
 }
 
 .stage {
@@ -164,6 +164,18 @@ p {
   height: 38px;
   border-radius: 10px;
   background: var(--raised);
+}
+
+.icon-btn.xs {
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  background: var(--raised);
+}
+
+.icon-btn.accent {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
 .icon-btn:active,

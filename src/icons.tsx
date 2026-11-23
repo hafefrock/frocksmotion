@@ -62,6 +62,12 @@ const paths = {
     </>
   ),
   resize: <path d="M4 14v6h6M20 10V4h-6M4 20l7-7M20 4l-7 7" />,
+  export: (
+    <>
+      <path d="M12 15V4M8 8l4-4 4 4" />
+      <path d="M5 14v5a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-5" />
+    </>
+  ),
 };
 
 export type IconName = keyof typeof paths;

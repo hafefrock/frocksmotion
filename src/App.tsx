@@ -403,8 +403,8 @@ export const App: React.FC = () => {
     <div className="editor">
       <header className="topbar">
         <h1 className="brand">FROCKSMOTION</h1>
-        <button className="btn primary sm" onClick={() => setExportOpen(true)}>
-          Ekspor
+        <button className="icon-btn xs accent" aria-label="Ekspor" onClick={() => setExportOpen(true)}>
+          <Icon name="export" size={18} />
         </button>
       </header>
 
