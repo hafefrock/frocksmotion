@@ -11,9 +11,9 @@ on:
           - "2K"
           - "1080p"
           - "720p"
-      title:
-        description: "Teks judul"
-        default: "Halo Remotion"
+      project:
+        description: "Data proyek (JSON dari app). Kosongkan untuk contoh bawaan."
+        default: ""
 
 jobs:
   render:
@@ -31,7 +31,7 @@ jobs:
       - name: Render
         env:
           QUALITY: ${{ inputs.quality }}
-          TITLE: ${{ inputs.title }}
+          PROJECT: ${{ inputs.project }}
         run: |
           case "$QUALITY" in
             "2K") SCALE=1 ;;
@@ -39,9 +39,12 @@ jobs:
             "720p") SCALE=0.5 ;;
           esac
           mkdir -p out
-          npx remotion render src/remotion/index.ts Main out/video.mp4 \
-            --scale=$SCALE \
-            --props="$(node -e 'console.log(JSON.stringify({title: process.env.TITLE, scale: 1}))')"
+          PROPS_ARG=""
+          if [ -n "$(echo "$PROJECT" | tr -d '[:space:]')" ]; then
+            node -e 'const fs=require("fs"); fs.writeFileSync("out/props.json", JSON.stringify({project: JSON.parse(process.env.PROJECT), scale: 1}));'
+            PROPS_ARG="--props=out/props.json"
+          fi
+          npx remotion render src/remotion/index.ts Main out/video.mp4 --scale=$SCALE $PROPS_ARG
 
       - uses: actions/upload-artifact@v4
         with:
