@@ -96,7 +96,7 @@ export async function hydrateProject(p: Project): Promise<Project> {
   const layers = await Promise.all(
     p.layers.map(async (l) => {
       if (l.type !== "media") return l;
-      const blob = await getFile(l.id);
+      const blob = await getFile(l.fileId ?? l.id);
       return blob ? { ...l, src: URL.createObjectURL(blob) } : l;
     }),
   );

@@ -19,6 +19,7 @@ export type MediaLayer = {
   id: string;
   kind: "image" | "video";
   name: string; // nama file; untuk ekspor, file harus ada di folder media/ repo
+  fileId?: string; // kunci file di penyimpanan hp (dipakai bersama oleh layer hasil belah/gandakan)
   src?: string; // alamat sementara di hp (hanya untuk preview, tidak ikut diekspor)
   mediaDuration?: number; // durasi asli klip (detik)
   x: number;
