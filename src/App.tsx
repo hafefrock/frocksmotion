@@ -1,6 +1,15 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Player } from "@remotion/player";
 import { Video } from "./Video";
+import {
+  deleteFile,
+  hydrateProject,
+  loadSavedProject,
+  parseProject,
+  putFile,
+  saveProject,
+  serializeProject,
+} from "./storage";
 import { FPS, FULL_H, FULL_W, Layer, MediaLayer, Project, TextLayer, defaultProject } from "./types";
 
 const PREVIEW_H = 360; // live preview 360p
@@ -67,7 +76,34 @@ const chipLabel = (l: Layer, i: number) =>
 export const App: React.FC = () => {
   const [project, setProject] = useState<Project>(defaultProject);
   const [selectedId, setSelectedId] = useState(defaultProject.layers[0].id);
+  const [loaded, setLoaded] = useState(false);
+  const [importText, setImportText] = useState("");
   const selected = project.layers.find((l) => l.id === selectedId);
+
+  // Muat proyek tersimpan saat app dibuka
+  useEffect(() => {
+    (async () => {
+      const saved = loadSavedProject();
+      if (saved) {
+        const hydrated = await hydrateProject(saved);
+        setProject(hydrated);
+        setSelectedId(hydrated.layers[0]?.id ?? "");
+      }
+      setLoaded(true);
+      try {
+        await navigator.storage?.persist?.();
+      } catch {
+        /* abaikan */
+      }
+    })();
+  }, []);
+
+  // Simpan otomatis setiap ada perubahan
+  useEffect(() => {
+    if (!loaded) return;
+    const t = setTimeout(() => saveProject(project), 400);
+    return () => clearTimeout(t);
+  }, [project, loaded]);
 
   const updateLayer = (patch: Record<string, unknown>) =>
     setProject((p) => ({
@@ -97,11 +133,13 @@ export const App: React.FC = () => {
     const added: MediaLayer[] = [];
     for (const f of files) {
       const url = URL.createObjectURL(f);
+      const id = uid();
+      await putFile(id, f);
       const isVideo = f.type.startsWith("video/");
       const mediaDuration = isVideo ? await readVideoDuration(url) : undefined;
       added.push({
         type: "media",
-        id: uid(),
+        id,
         kind: isVideo ? "video" : "image",
         name: f.name,
         src: url,
@@ -120,6 +158,7 @@ export const App: React.FC = () => {
   };
 
   const removeLayer = () => {
+    if (selected?.type === "media") deleteFile(selected.id);
     const rest = project.layers.filter((l) => l.id !== selectedId);
     setProject((p) => ({ ...p, layers: rest }));
     setSelectedId(rest[0]?.id ?? "");
@@ -135,8 +174,28 @@ export const App: React.FC = () => {
       return { ...p, layers };
     });
 
-  // alamat sementara (src) tidak ikut diekspor
-  const exportJson = JSON.stringify(project, (k, v) => (k === "src" ? undefined : v));
+  const exportJson = serializeProject(project);
+  const missingMedia = project.layers.filter((l) => l.type === "media" && !l.src);
+
+  const newProject = () => {
+    if (!window.confirm("Mulai proyek baru? Proyek saat ini akan dihapus dari hp.")) return;
+    project.layers.forEach((l) => {
+      if (l.type === "media") deleteFile(l.id);
+    });
+    setProject(defaultProject);
+    setSelectedId(defaultProject.layers[0].id);
+  };
+
+  const importProject = () => {
+    const p = parseProject(importText);
+    if (!p) {
+      window.alert("Data proyek tidak valid.");
+      return;
+    }
+    setProject(p);
+    setSelectedId(p.layers[0]?.id ?? "");
+    setImportText("");
+  };
 
   return (
     <div
@@ -167,6 +226,13 @@ export const App: React.FC = () => {
         max={60}
         onChange={(v) => setProject((p) => ({ ...p, duration: v }))}
       />
+
+      {missingMedia.length > 0 && (
+        <div style={{ ...box, borderColor: "#f59e0b", fontSize: 14 }}>
+          {missingMedia.length} file belum ada di hp (misalnya setelah memuat data proyek). Pilih ulang lewat
+          "+ Gambar/Video" dengan nama file yang sama.
+        </div>
+      )}
 
       <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         {project.layers.map((l, i) => (
@@ -250,6 +316,28 @@ export const App: React.FC = () => {
           (hindari spasi di nama file).
         </p>
         <textarea readOnly value={exportJson} rows={6} style={{ ...box, fontSize: 12 }} />
+      </details>
+
+      <details>
+        <summary style={{ fontSize: 15 }}>Proyek: baru / muat dari data</summary>
+        <p style={{ fontSize: 13, opacity: 0.75 }}>
+          Proyek tersimpan otomatis di hp ini. Untuk memuat proyek dari data yang pernah disalin, tempel di sini.
+        </p>
+        <textarea
+          value={importText}
+          onChange={(e) => setImportText(e.target.value)}
+          placeholder='Tempel data proyek (JSON)'
+          rows={4}
+          style={{ ...box, fontSize: 12 }}
+        />
+        <div style={{ display: "flex", gap: 8, marginTop: 8 }}>
+          <button onClick={importProject} style={btn}>
+            Muat data
+          </button>
+          <button onClick={newProject} style={{ ...btn, background: "#b91c1c" }}>
+            Proyek baru
+          </button>
+        </div>
       </details>
 
       <small style={{ opacity: 0.7 }}>Preview 360p. Ekspor 2K / 1080p / 720p lewat GitHub Actions.</small>
