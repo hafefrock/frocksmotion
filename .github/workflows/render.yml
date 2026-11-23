@@ -38,13 +38,13 @@ jobs:
             "1080p") SCALE=0.75 ;;
             "720p") SCALE=0.5 ;;
           esac
-          mkdir -p out
+          mkdir -p out media
           PROPS_ARG=""
           if [ -n "$(echo "$PROJECT" | tr -d '[:space:]')" ]; then
             node -e 'const fs=require("fs"); fs.writeFileSync("out/props.json", JSON.stringify({project: JSON.parse(process.env.PROJECT), scale: 1}));'
             PROPS_ARG="--props=out/props.json"
           fi
-          npx remotion render src/remotion/index.ts Main out/video.mp4 --scale=$SCALE $PROPS_ARG
+          npx remotion render src/remotion/index.ts Main out/video.mp4 --public-dir=media --scale=$SCALE $PROPS_ARG
 
       - uses: actions/upload-artifact@v4
         with:
