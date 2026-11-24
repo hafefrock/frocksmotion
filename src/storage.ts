@@ -60,9 +60,9 @@ export async function deleteFile(key: string): Promise<void> {
 // ---- Penyimpanan data proyek: localStorage ----
 const KEY = "frocksmotion:project:v1";
 
-// alamat sementara (src) tidak ikut disimpan atau diekspor
+// alamat sementara (src) dan gambar mini (thumb) tidak ikut disimpan atau diekspor
 export const serializeProject = (p: Project): string =>
-  JSON.stringify(p, (k, v) => (k === "src" ? undefined : v));
+  JSON.stringify(p, (k, v) => (k === "src" || k === "thumb" ? undefined : v));
 
 export function parseProject(raw: string): Project | null {
   try {
@@ -95,7 +95,7 @@ export function loadSavedProject(): Project | null {
 export async function hydrateProject(p: Project): Promise<Project> {
   const layers = await Promise.all(
     p.layers.map(async (l) => {
-      if (l.type !== "media") return l;
+      if (l.type === "text") return l;
       const blob = await getFile(l.fileId ?? l.id);
       return blob ? { ...l, src: URL.createObjectURL(blob) } : l;
     }),

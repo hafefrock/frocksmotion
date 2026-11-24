@@ -8,7 +8,8 @@ const ZOOMS = [30, 60, 100, 160]; // piksel per detik
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 
-export const kindClass = (l: Layer) => (l.type === "text" ? "k-text" : l.kind === "video" ? "k-video" : "k-image");
+export const kindClass = (l: Layer) =>
+  l.type === "text" ? "k-text" : l.type === "audio" ? "k-audio" : l.kind === "video" ? "k-video" : "k-image";
 export const layerName = (l: Layer) => (l.type === "text" ? l.text.split("\n")[0] || "(teks kosong)" : l.name);
 
 type Drag = {
@@ -35,6 +36,7 @@ export const Timeline: React.FC<{
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(360);
+  const [h, setH] = useState(300);
   const expected = useRef(0); // posisi geser yang kita atur sendiri
   const userActive = useRef(false);
   const userTimer = useRef<number | undefined>(undefined);
@@ -44,12 +46,29 @@ export const Timeline: React.FC<{
   useLayoutEffect(() => {
     const el = scrollRef.current;
     if (!el) return;
-    const measure = () => setW(el.clientWidth);
+    const measure = () => {
+      setW(el.clientWidth);
+      setH(el.clientHeight);
+    };
     measure();
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
+
+  // Pastikan baris layer yang dipilih terlihat (geser vertikal saja)
+  useEffect(() => {
+    const sc = scrollRef.current;
+    if (!sc || !selectedId) return;
+    const row = sc.querySelector<HTMLElement>(`[data-row="${selectedId}"]`);
+    if (!row) return;
+    const c = sc.getBoundingClientRect();
+    const r = row.getBoundingClientRect();
+    const top = c.top + 28 + 6;
+    const bottom = c.bottom - 6;
+    if (r.top < top) sc.scrollTop += r.top - top;
+    else if (r.bottom > bottom) sc.scrollTop += r.bottom - bottom;
+  }, [selectedId, layers.length, h]);
 
   const setScroll = (x: number) => {
     const el = scrollRef.current;
@@ -120,8 +139,9 @@ export const Timeline: React.FC<{
     if (!d) return;
     const l = d.layer;
     const dx = (e.clientX - d.startX) / pps;
-    const isVideo = l.type === "media" && l.kind === "video";
-    const trim0 = l.type === "media" ? l.trim : 0;
+    const hasTrim = l.type === "audio" || (l.type === "media" && l.kind === "video");
+    const trim0 = l.type === "text" ? 0 : l.trim;
+    const mediaDur = l.type === "text" ? undefined : l.mediaDuration;
 
     if (d.mode === "move") {
       const v = round1(clamp(l.start + dx, 0, Math.max(0, duration - l.duration)));
@@ -130,20 +150,20 @@ export const Timeline: React.FC<{
         onChange(d.id, { start: v }, `drag:${d.id}`);
       }
     } else if (d.mode === "right") {
-      const mediaLimit = isVideo && l.type === "media" && l.mediaDuration ? l.mediaDuration - trim0 : Infinity;
+      const mediaLimit = hasTrim && mediaDur ? mediaDur - trim0 : Infinity;
       const v = round1(clamp(l.duration + dx, 0.5, Math.max(0.5, Math.min(duration - l.start, mediaLimit))));
       if (v !== d.last) {
         d.last = v;
         onChange(d.id, { duration: v }, `drag:${d.id}`);
       }
     } else {
-      const minStart = isVideo ? Math.max(0, l.start - trim0) : 0;
+      const minStart = hasTrim ? Math.max(0, l.start - trim0) : 0;
       const v = round1(clamp(l.start + dx, minStart, l.start + l.duration - 0.5));
       if (v !== d.last) {
         d.last = v;
         const delta = v - l.start;
         const patch: Record<string, unknown> = { start: v, duration: round1(l.duration - delta) };
-        if (isVideo) patch.trim = round1(Math.max(0, trim0 + delta));
+        if (hasTrim) patch.trim = round1(Math.max(0, trim0 + delta));
         onChange(d.id, patch, `drag:${d.id}`);
       }
     }
@@ -181,11 +201,16 @@ export const Timeline: React.FC<{
 
             {layers.map((l) => {
               const sel = l.id === selectedId;
+              const thumb = l.type === "media" ? l.thumb : undefined;
               return (
-                <div key={l.id} className="tl-row">
+                <div key={l.id} className="tl-row" data-row={l.id}>
                   <div
-                    className={`tl-bar ${kindClass(l)}${sel ? " sel" : ""}`}
-                    style={{ left: l.start * pps, width: Math.max(sel ? 60 : 26, l.duration * pps) }}
+                    className={`tl-bar ${kindClass(l)}${sel ? " sel" : ""}${thumb ? " has-thumb" : ""}`}
+                    style={{
+                      left: l.start * pps,
+                      width: Math.max(sel ? 60 : 26, l.duration * pps),
+                      ...(thumb ? { backgroundImage: `url(${thumb})` } : {}),
+                    }}
                     onClick={() => onSelect(l.id)}
                     onPointerDown={sel ? (e) => startDrag(e, l, "move") : undefined}
                   >
