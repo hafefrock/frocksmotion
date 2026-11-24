@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Player, PlayerRef } from "@remotion/player";
+import { FONTS } from "./fonts";
 import { Icon, IconName } from "./icons";
+import { probe } from "./media";
+import { PreviewOverlay } from "./PreviewOverlay";
 import { Timeline } from "./Timeline";
 import { Video } from "./Video";
 import {
@@ -12,18 +15,50 @@ import {
   saveProject,
   serializeProject,
 } from "./storage";
-import { FPS, FULL_H, FULL_W, Layer, MediaLayer, Project, TextLayer, defaultProject } from "./types";
+import {
+  Anim,
+  AudioLayer,
+  Background,
+  DEFAULT_BG,
+  FPS,
+  FULL_H,
+  FULL_W,
+  Layer,
+  MediaLayer,
+  Project,
+  TextLayer,
+  defaultProject,
+  isVisual,
+} from "./types";
 
 const PREVIEW_H = 360; // live preview 360p
 const previewScale = PREVIEW_H / FULL_H; // 0.25
 
 const SWATCHES = ["#FFFFFF", "#FFB84D", "#FF4F8B", "#34C6B4", "#9A8CFF", "#1F2937"];
 
+const BG_PRESETS: [string, string][] = [
+  ["#1e3a8a", "#3b82f6"],
+  ["#7c3aed", "#ec4899"],
+  ["#0f766e", "#34d399"],
+  ["#b45309", "#fbbf24"],
+  ["#111827", "#4b5563"],
+  ["#be123c", "#fb7185"],
+];
+
+const ANIMS: { id: Anim; label: string }[] = [
+  { id: "none", label: "Tanpa" },
+  { id: "fade", label: "Pudar" },
+  { id: "slideUp", label: "Naik" },
+  { id: "slideLeft", label: "Geser" },
+  { id: "zoom", label: "Zoom" },
+  { id: "pop", label: "Pop" },
+];
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const half = (n: number) => Math.max(0.5, Math.round(n * 2) / 2);
 
-type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi";
+type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar";
 type Hist = { present: Project; past: Project[]; future: Project[] };
 
 const PANEL_TITLE: Record<Panel, string> = {
@@ -32,6 +67,9 @@ const PANEL_TITLE: Record<Panel, string> = {
   posisi: "Posisi",
   waktu: "Waktu",
   durasi: "Durasi video",
+  anim: "Animasi",
+  volume: "Volume",
+  latar: "Latar",
 };
 
 const fmt = (s: number) => {
@@ -118,22 +156,21 @@ const Controls: React.FC<{
   );
 };
 
-const readVideoDuration = (url: string): Promise<number> =>
-  new Promise((resolve) => {
-    const v = document.createElement("video");
-    v.preload = "metadata";
-    v.onloadedmetadata = () => resolve(Number.isFinite(v.duration) ? v.duration : 5);
-    v.onerror = () => resolve(5);
-    v.src = url;
-  });
-
-type Tool = { icon: IconName; label: string; onClick?: () => void; danger?: boolean; disabled?: boolean; file?: boolean };
+type Tool = {
+  icon: IconName;
+  label: string;
+  onClick?: () => void;
+  danger?: boolean;
+  disabled?: boolean;
+  file?: "media" | "audio";
+};
 
 export const App: React.FC = () => {
   const [hist, setHist] = useState<Hist>({ present: defaultProject, past: [], future: [] });
   const histRef = useRef(hist);
   const lastEdit = useRef({ key: "", t: 0 });
   const project = hist.present;
+  const bg = project.background ?? DEFAULT_BG;
 
   const [selectedId, setSelectedId] = useState("");
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -147,7 +184,7 @@ export const App: React.FC = () => {
   const toastTimer = useRef<number | undefined>(undefined);
 
   const selected = project.layers.find((l) => l.id === selectedId);
-  const activePanel: Panel | null = panel === "durasi" || (panel && selected) ? panel : null;
+  const activePanel: Panel | null = panel === "durasi" || panel === "latar" || (panel && selected) ? panel : null;
 
   // ---- Riwayat (undo/redo) ----
   const commit = (h: Hist) => {
@@ -190,7 +227,30 @@ export const App: React.FC = () => {
   useEffect(() => {
     (async () => {
       const saved = loadSavedProject();
-      if (saved) commit({ present: await hydrateProject(saved), past: [], future: [] });
+      if (saved) {
+        const hydrated = await hydrateProject(saved);
+        commit({ present: hydrated, past: [], future: [] });
+        // gambar mini dibuat belakangan supaya app cepat terbuka
+        const thumbs = new Map<string, string>();
+        await Promise.all(
+          hydrated.layers.map(async (l) => {
+            if (l.type === "media" && l.src) {
+              const meta = await probe(l.src, l.kind);
+              if (meta.thumb) thumbs.set(l.id, meta.thumb);
+            }
+          }),
+        );
+        if (thumbs.size) {
+          const cur = histRef.current;
+          commit({
+            ...cur,
+            present: {
+              ...cur.present,
+              layers: cur.present.layers.map((l) => (l.type === "media" && thumbs.has(l.id) ? { ...l, thumb: thumbs.get(l.id) } : l)),
+            },
+          });
+        }
+      }
       setLoaded(true);
       try {
         await navigator.storage?.persist?.();
@@ -216,10 +276,18 @@ export const App: React.FC = () => {
   const updateLayer = (patch: Record<string, unknown>) =>
     patchLayer(selectedId, patch, `${selectedId}:${Object.keys(patch).join(",")}`);
 
+  const setBg = (patch: Partial<Background>) => apply((p) => ({ ...p, background: { ...(p.background ?? DEFAULT_BG), ...patch } }), "latar");
+
+  const selectLayer = (id: string) => {
+    if (id !== selectedId) setPanel(null);
+    setSelectedId(id);
+  };
+
   const setDuration = (d: number) => {
     const next = Math.min(60, Math.max(1, d));
     apply(
       (p) => ({
+        ...p,
         duration: next,
         layers: p.layers.map((l) => {
           const start = Math.min(l.start, Math.max(0, next - 0.5));
@@ -230,6 +298,8 @@ export const App: React.FC = () => {
     );
   };
 
+  const playheadSec = () => round1((playerRef.current?.getCurrentFrame() ?? 0) / FPS);
+
   const addText = () => {
     const layer: TextLayer = {
       type: "text",
@@ -239,7 +309,9 @@ export const App: React.FC = () => {
       y: FULL_H / 2,
       size: 120,
       color: "#ffffff",
-      start: round1((playerRef.current?.getCurrentFrame() ?? 0) / FPS),
+      font: "manrope",
+      anim: "slideUp",
+      start: playheadSec(),
       duration: 2,
     };
     layer.duration = Math.max(0.5, Math.min(2, round1(project.duration - layer.start)));
@@ -257,7 +329,7 @@ export const App: React.FC = () => {
       const id = uid();
       await putFile(id, f);
       const isVideo = f.type.startsWith("video/");
-      const mediaDuration = isVideo ? await readVideoDuration(url) : undefined;
+      const meta = await probe(url, isVideo ? "video" : "image");
       added.push({
         type: "media",
         id,
@@ -265,19 +337,50 @@ export const App: React.FC = () => {
         kind: isVideo ? "video" : "image",
         name: f.name,
         src: url,
-        mediaDuration,
+        thumb: meta.thumb,
+        aspect: meta.aspect,
+        mediaDuration: meta.duration,
         x: FULL_W / 2,
         y: FULL_H / 2,
         width: 1280,
         trim: 0,
         start: 0,
-        duration: isVideo ? Math.min(project.duration, half(mediaDuration ?? 5)) : project.duration,
+        duration: isVideo ? Math.min(project.duration, half(meta.duration ?? 5)) : project.duration,
       });
     }
     if (added.length === 0) return;
     apply((p) => ({ ...p, layers: [...p.layers, ...added] }));
     setSelectedId(added[added.length - 1].id);
     setPanel(null);
+  };
+
+  const addAudio = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = "";
+    const added: AudioLayer[] = [];
+    for (const f of files) {
+      const url = URL.createObjectURL(f);
+      const id = uid();
+      await putFile(id, f);
+      const meta = await probe(url, "audio");
+      const start = Math.min(playheadSec(), Math.max(0, project.duration - 0.5));
+      added.push({
+        type: "audio",
+        id,
+        fileId: id,
+        name: f.name,
+        src: url,
+        mediaDuration: meta.duration,
+        volume: 1,
+        trim: 0,
+        start,
+        duration: Math.max(0.5, Math.min(project.duration - start, half(meta.duration ?? project.duration))),
+      });
+    }
+    if (added.length === 0) return;
+    apply((p) => ({ ...p, layers: [...p.layers, ...added] }));
+    setSelectedId(added[added.length - 1].id);
+    setPanel("volume");
   };
 
   const removeLayer = () => {
@@ -298,12 +401,11 @@ export const App: React.FC = () => {
 
   const duplicateLayer = () => {
     if (!selected) return;
-    const copy = {
-      ...selected,
-      id: uid(),
-      x: Math.min(FULL_W, selected.x + 80),
-      y: Math.min(FULL_H, selected.y + 80),
-    } as Layer;
+    const copy = (
+      isVisual(selected)
+        ? { ...selected, id: uid(), x: Math.min(FULL_W, selected.x + 80), y: Math.min(FULL_H, selected.y + 80) }
+        : { ...selected, id: uid() }
+    ) as Layer;
     apply((p) => {
       const i = p.layers.findIndex((l) => l.id === selected.id);
       const layers = [...p.layers];
@@ -316,7 +418,7 @@ export const App: React.FC = () => {
   // Belah layer terpilih di posisi garis putar
   const splitLayer = () => {
     if (!selected) return;
-    const t = round1((playerRef.current?.getCurrentFrame() ?? 0) / FPS);
+    const t = playheadSec();
     const end = selected.start + selected.duration;
     if (t <= selected.start + 0.2 || t >= end - 0.2) {
       showToast("Geser garis putar ke dalam layer yang dipilih.");
@@ -324,7 +426,9 @@ export const App: React.FC = () => {
     }
     const first = { ...selected, duration: round1(t - selected.start) } as Layer;
     const second = { ...selected, id: uid(), start: t, duration: round1(end - t) } as Layer;
-    if (second.type === "media" && second.kind === "video") second.trim = round1(second.trim + (t - selected.start));
+    if ((second.type === "media" && second.kind === "video") || second.type === "audio") {
+      second.trim = round1(second.trim + (t - selected.start));
+    }
     apply((p) => {
       const i = p.layers.findIndex((l) => l.id === selected.id);
       const layers = [...p.layers];
@@ -336,7 +440,7 @@ export const App: React.FC = () => {
 
   // ---- Ekspor dan proyek ----
   const exportJson = serializeProject(project);
-  const missingMedia = project.layers.filter((l) => l.type === "media" && !l.src);
+  const missingMedia = project.layers.filter((l) => l.type !== "text" && !l.src);
   const selectedIndex = project.layers.findIndex((l) => l.id === selectedId);
 
   const copyExport = async () => {
@@ -353,7 +457,7 @@ export const App: React.FC = () => {
   const newProject = () => {
     if (!window.confirm("Mulai proyek baru? Proyek saat ini akan dihapus dari hp.")) return;
     project.layers.forEach((l) => {
-      if (l.type === "media") deleteFile(l.fileId ?? l.id);
+      if (l.type !== "text") deleteFile(l.fileId ?? l.id);
     });
     commit({ present: defaultProject, past: [], future: [] });
     setSelectedId("");
@@ -375,29 +479,62 @@ export const App: React.FC = () => {
   };
 
   // ---- Toolbar bawah yang berubah sesuai pilihan ----
-  const common: Tool[] = [
-    { icon: "split", label: "Belah", onClick: splitLayer },
-    { icon: "copy", label: "Gandakan", onClick: duplicateLayer },
+  const stackTools: Tool[] = [
     { icon: "up", label: "Naik", onClick: () => moveLayer(1), disabled: selectedIndex >= project.layers.length - 1 },
     { icon: "down", label: "Turun", onClick: () => moveLayer(-1), disabled: selectedIndex <= 0 },
-    { icon: "trash", label: "Hapus", onClick: removeLayer, danger: true },
   ];
+  const editTools: Tool[] = [
+    { icon: "split", label: "Belah", onClick: splitLayer },
+    { icon: "copy", label: "Gandakan", onClick: duplicateLayer },
+  ];
+  const deleteTool: Tool = { icon: "trash", label: "Hapus", onClick: removeLayer, danger: true };
+  const back: Tool = { icon: "back", label: "Kembali", onClick: () => selectLayer("") };
 
-  const tools: Tool[] = !selected
-    ? [
-        { icon: "text", label: "Teks", onClick: addText },
-        { icon: "media", label: "Media", file: true },
-        { icon: "clock", label: "Durasi", onClick: () => setPanel("durasi") },
-      ]
-    : [
-        { icon: "back", label: "Kembali", onClick: () => setSelectedId("") },
-        selected.type === "text"
-          ? { icon: "pencil", label: "Edit", onClick: () => setPanel("edit") }
-          : { icon: "resize", label: "Ukuran", onClick: () => setPanel("ukuran") },
-        { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
-        { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
-        ...common,
-      ];
+  let tools: Tool[];
+  if (!selected) {
+    tools = [
+      { icon: "text", label: "Teks", onClick: addText },
+      { icon: "media", label: "Media", file: "media" },
+      { icon: "music", label: "Audio", file: "audio" },
+      { icon: "palette", label: "Latar", onClick: () => setPanel("latar") },
+      { icon: "clock", label: "Durasi", onClick: () => setPanel("durasi") },
+    ];
+  } else if (selected.type === "text") {
+    tools = [
+      back,
+      { icon: "pencil", label: "Edit", onClick: () => setPanel("edit") },
+      { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
+      { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
+      { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
+      ...editTools,
+      ...stackTools,
+      deleteTool,
+    ];
+  } else if (selected.type === "media") {
+    tools = [
+      back,
+      { icon: "resize", label: "Ukuran", onClick: () => setPanel("ukuran") },
+      ...(selected.kind === "video" ? [{ icon: "volume", label: "Volume", onClick: () => setPanel("volume") } as Tool] : []),
+      { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
+      { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
+      { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
+      ...editTools,
+      ...stackTools,
+      deleteTool,
+    ];
+  } else {
+    tools = [
+      back,
+      { icon: "volume", label: "Volume", onClick: () => setPanel("volume") },
+      { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
+      ...editTools,
+      deleteTool,
+    ];
+  }
+
+  const visualSel = selected && isVisual(selected) ? selected : undefined;
+  const volumeSel =
+    selected && (selected.type === "audio" || (selected.type === "media" && selected.kind === "video")) ? selected : undefined;
 
   return (
     <div className="editor">
@@ -419,9 +556,16 @@ export const App: React.FC = () => {
           compositionHeight={PREVIEW_H}
           style={{ width: "100%", display: "block" }}
           controls={false}
-          clickToPlay
+          clickToPlay={false}
           allowFullscreen={false}
           loop
+        />
+        <PreviewOverlay
+          layers={project.layers}
+          selectedId={selectedId}
+          playerRef={playerRef}
+          onSelect={selectLayer}
+          onChange={patchLayer}
         />
       </div>
 
@@ -437,17 +581,14 @@ export const App: React.FC = () => {
       <div className="tl-area">
         {missingMedia.length > 0 && (
           <div className="banner">
-            {missingMedia.length} file belum ada di hp. Pilih ulang lewat tombol Media dengan nama file yang sama.
+            {missingMedia.length} file belum ada di hp. Pilih ulang lewat tombol Media atau Audio dengan nama file yang sama.
           </div>
         )}
         <Timeline
           layers={project.layers}
           duration={project.duration}
           selectedId={selectedId}
-          onSelect={(id) => {
-            setSelectedId(id);
-            if (!id) setPanel(null);
-          }}
+          onSelect={selectLayer}
           onChange={patchLayer}
           playerRef={playerRef}
         />
@@ -467,6 +608,47 @@ export const App: React.FC = () => {
                 <Slider label="Durasi video" unit=" dtk" value={project.duration} min={1} max={60} onChange={setDuration} />
               )}
 
+              {activePanel === "latar" && (
+                <>
+                  <div className="seg">
+                    <button aria-pressed={bg.mode === "gradient"} onClick={() => setBg({ mode: "gradient" })}>
+                      Gradasi
+                    </button>
+                    <button aria-pressed={bg.mode === "solid"} onClick={() => setBg({ mode: "solid" })}>
+                      Polos
+                    </button>
+                  </div>
+                  <div className="swatches">
+                    {BG_PRESETS.map(([a, b]) => (
+                      <button
+                        key={a + b}
+                        className="swatch"
+                        aria-label={`Latar ${a} ke ${b}`}
+                        aria-pressed={bg.mode === "gradient" && bg.a === a && bg.b === b}
+                        style={{ background: `linear-gradient(135deg, ${a}, ${b})` }}
+                        onClick={() => setBg({ mode: "gradient", a, b })}
+                      />
+                    ))}
+                  </div>
+                  <div className="grid2">
+                    <label className="field">
+                      <span className="field-row">
+                        <span>Warna 1</span>
+                      </span>
+                      <input className="colorbar" type="color" value={bg.a} onChange={(e) => setBg({ a: e.target.value })} />
+                    </label>
+                    {bg.mode === "gradient" && (
+                      <label className="field">
+                        <span className="field-row">
+                          <span>Warna 2</span>
+                        </span>
+                        <input className="colorbar" type="color" value={bg.b} onChange={(e) => setBg({ b: e.target.value })} />
+                      </label>
+                    )}
+                  </div>
+                </>
+              )}
+
               {activePanel === "edit" && selected?.type === "text" && (
                 <>
                   <textarea
@@ -475,6 +657,19 @@ export const App: React.FC = () => {
                     value={selected.text}
                     onChange={(e) => updateLayer({ text: e.target.value })}
                   />
+                  <div className="chip-grid">
+                    {FONTS.map((f) => (
+                      <button
+                        key={f.id}
+                        className="chip"
+                        aria-pressed={(selected.font ?? "manrope") === f.id}
+                        style={{ fontFamily: f.family, fontWeight: f.weight }}
+                        onClick={() => updateLayer({ font: f.id })}
+                      >
+                        {f.label}
+                      </button>
+                    ))}
+                  </div>
                   <Slider label="Ukuran huruf" value={selected.size} min={30} max={400} step={5} onChange={(v) => updateLayer({ size: v })} />
                   <div className="field">
                     <span className="field-row">
@@ -503,14 +698,28 @@ export const App: React.FC = () => {
                 </>
               )}
 
+              {activePanel === "anim" && visualSel && (
+                <>
+                  <div className="chip-grid">
+                    {ANIMS.map((a) => (
+                      <button
+                        key={a.id}
+                        className="chip"
+                        aria-pressed={(visualSel.anim ?? (visualSel.type === "text" ? "slideUp" : "none")) === a.id}
+                        onClick={() => updateLayer({ anim: a.id })}
+                      >
+                        {a.label}
+                      </button>
+                    ))}
+                  </div>
+                  <button className="chip wide" aria-pressed={!!visualSel.animOut} onClick={() => updateLayer({ animOut: !visualSel.animOut })}>
+                    Pudar di akhir
+                  </button>
+                </>
+              )}
+
               {activePanel === "ukuran" && selected?.type === "media" && (
                 <>
-                  <div className="file-info">
-                    <Icon name="media" />
-                    <span>
-                      {selected.name} ({selected.kind === "video" ? "video" : "gambar"})
-                    </span>
-                  </div>
                   <Slider label="Lebar" value={selected.width} min={100} max={FULL_W} step={20} onChange={(v) => updateLayer({ width: v })} />
                   {selected.kind === "video" && (
                     <Slider
@@ -526,10 +735,35 @@ export const App: React.FC = () => {
                 </>
               )}
 
-              {activePanel === "posisi" && selected && (
+              {activePanel === "volume" && volumeSel && (
+                <>
+                  <Slider
+                    label="Volume"
+                    unit="%"
+                    value={Math.round((volumeSel.volume ?? 1) * 100)}
+                    min={0}
+                    max={100}
+                    step={5}
+                    onChange={(v) => updateLayer({ volume: v / 100 })}
+                  />
+                  {volumeSel.type === "audio" && (
+                    <Slider
+                      label="Potong awal klip"
+                      unit=" dtk"
+                      value={volumeSel.trim}
+                      min={0}
+                      max={Math.max(0.5, Math.floor((volumeSel.mediaDuration ?? 5) * 2) / 2)}
+                      step={0.5}
+                      onChange={(v) => updateLayer({ trim: v })}
+                    />
+                  )}
+                </>
+              )}
+
+              {activePanel === "posisi" && visualSel && (
                 <div className="grid2">
-                  <Slider label="Posisi X" value={selected.x} min={0} max={FULL_W} step={10} onChange={(v) => updateLayer({ x: v })} />
-                  <Slider label="Posisi Y" value={selected.y} min={0} max={FULL_H} step={10} onChange={(v) => updateLayer({ y: v })} />
+                  <Slider label="Posisi X" value={visualSel.x} min={0} max={FULL_W} step={10} onChange={(v) => updateLayer({ x: v })} />
+                  <Slider label="Posisi Y" value={visualSel.y} min={0} max={FULL_H} step={10} onChange={(v) => updateLayer({ y: v })} />
                 </div>
               )}
 
@@ -548,7 +782,13 @@ export const App: React.FC = () => {
                 <label key={t.label} className="tool">
                   <Icon name={t.icon} size={22} />
                   {t.label}
-                  <input type="file" accept="image/*,video/*" multiple hidden onChange={addMedia} />
+                  <input
+                    type="file"
+                    accept={t.file === "audio" ? "audio/*" : "image/*,video/*"}
+                    multiple
+                    hidden
+                    onChange={t.file === "audio" ? addAudio : addMedia}
+                  />
                 </label>
               ) : (
                 <button
@@ -582,8 +822,8 @@ export const App: React.FC = () => {
               <h3>Data untuk ekspor</h3>
               <p className="hint">
                 Salin, lalu tempel ke kolom project di workflow Render Video, dan pilih kualitas 2K, 1080p, atau 720p
-                di sana. Unggah dulu file gambar/video asli ke folder media di repo dengan nama yang sama persis,
-                tanpa spasi.
+                di sana. Unggah dulu file gambar, video, dan audio asli ke folder media di repo dengan nama yang sama
+                persis, tanpa spasi.
               </p>
               <textarea ref={exportRef} className="input" readOnly rows={4} value={exportJson} />
               <button className="btn primary" style={{ marginTop: 10 }} onClick={copyExport}>

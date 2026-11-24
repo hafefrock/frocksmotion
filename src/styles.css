@@ -382,7 +382,7 @@ p {
 
 .tl-zoom {
   position: absolute;
-  right: 8px;
+  left: 8px;
   bottom: 8px;
   z-index: 7;
   display: flex;
@@ -660,4 +660,146 @@ input[type="range"]::-webkit-slider-thumb {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ---------- Audio, thumbnail, animasi, latar, overlay preview ---------- */
+:root {
+  --c-audio: #ff8a5b;
+}
+
+.k-audio {
+  background-color: var(--c-audio);
+  background-image: repeating-linear-gradient(90deg, rgba(20, 24, 31, 0.28) 0 2px, transparent 2px 7px);
+}
+
+.tl-bar.has-thumb {
+  background-size: auto 100%;
+  background-repeat: repeat-x;
+  color: #fff;
+}
+
+.tl-bar.has-thumb .tl-label {
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.55), transparent);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.9);
+}
+
+.stage {
+  position: relative;
+}
+
+.pv-overlay {
+  position: absolute;
+  inset: 0;
+  touch-action: none;
+  overflow: hidden;
+}
+
+.pv-box {
+  position: absolute;
+  border: 2px solid var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+.pv-box i {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--accent);
+  border-radius: 50%;
+  background: var(--text);
+}
+
+.pv-box .tl {
+  top: -6px;
+  left: -6px;
+}
+.pv-box .tr {
+  top: -6px;
+  right: -6px;
+}
+.pv-box .bl {
+  bottom: -6px;
+  left: -6px;
+}
+.pv-box .br {
+  right: -6px;
+  bottom: -6px;
+}
+
+.pv-guide {
+  position: absolute;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.pv-guide.v {
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 1px;
+}
+
+.pv-guide.h {
+  left: 0;
+  right: 0;
+  top: 50%;
+  height: 1px;
+}
+
+.chip-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+}
+
+.chip {
+  min-height: 44px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.chip.wide {
+  width: 100%;
+}
+
+.chip[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: rgba(255, 79, 139, 0.14);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+
+.seg {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 3px;
+  border-radius: 12px;
+  background: var(--bg);
+}
+
+.seg button {
+  min-height: 40px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-weight: 700;
+}
+
+.seg button[aria-pressed="true"] {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.colorbar {
+  width: 100%;
+  height: 44px;
+  padding: 0;
+  border: 2px solid var(--line);
+  border-radius: 12px;
+  background: none;
 }
