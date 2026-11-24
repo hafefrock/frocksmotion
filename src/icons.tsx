@@ -89,6 +89,18 @@ const paths = {
       <circle cx="15.5" cy="7.5" r="1" />
     </>
   ),
+  ratio: (
+    <>
+      <rect x="3" y="6" width="18" height="12" rx="2" />
+      <path d="M7 10v4M17 10v4" />
+    </>
+  ),
+  rotate: (
+    <>
+      <path d="M20 11a8 8 0 1 0-2.3 5.7" />
+      <path d="M20 4v7h-7" />
+    </>
+  ),
   export: (
     <>
       <path d="M12 15V4M8 8l4-4 4 4" />

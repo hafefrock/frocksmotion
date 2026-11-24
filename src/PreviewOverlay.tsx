@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import type { PlayerRef } from "@remotion/player";
 import { fontOf } from "./fonts";
-import { FPS, FULL_H, FULL_W, Layer, TextLayer, VisualLayer, isVisual } from "./types";
+import { FPS, Layer, TextLayer, VisualLayer, isVisual } from "./types";
 
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
-const SNAP = 24; // jarak tarik ke garis tengah (koordinat 2K)
+const SNAP = 24; // jarak tarik ke garis tengah (koordinat kanvas)
+const ROT_DEAD = 6; // derajat putaran yang diabaikan supaya cubit biasa tidak ikut memutar
 
 let measureCtx: CanvasRenderingContext2D | null = null;
-const measureText = (l: TextLayer) => {
+const measureText = (l: TextLayer, cw: number) => {
   measureCtx ??= document.createElement("canvas").getContext("2d");
   const f = fontOf(l.font);
   let w = l.size * 2;
@@ -15,32 +16,39 @@ const measureText = (l: TextLayer) => {
     measureCtx.font = `${f.weight} ${l.size}px ${f.family}`;
     w = Math.max(...l.text.split("\n").map((line) => measureCtx!.measureText(line).width));
   }
-  return { w: Math.min(Math.max(w, l.size), FULL_W * 0.9), h: l.text.split("\n").length * l.size * 1.15 };
+  return { w: Math.min(Math.max(w, l.size), cw * 0.9), h: l.text.split("\n").length * l.size * 1.15 };
 };
 
-// Kotak pembatas layer di koordinat 2K
-const boxOf = (l: VisualLayer) =>
-  l.type === "text" ? measureText(l) : { w: l.width, h: l.width * (l.aspect ?? 9 / 16) };
+// Kotak pembatas layer di koordinat kanvas
+const boxOf = (l: VisualLayer, cw: number) =>
+  l.type === "text" ? measureText(l, cw) : { w: l.width, h: l.width * (l.aspect ?? 9 / 16) };
+
+const normDeg = (d: number) => {
+  let r = ((((d + 180) % 360) + 360) % 360) - 180;
+  if (Math.abs(r % 90) < 5 || Math.abs(r % 90) > 85) r = Math.round(r / 90) * 90; // tarik ke 0, 90, 180
+  return Math.round(r);
+};
 
 type Gesture =
   | { mode: "move"; id: string; startX: number; startY: number; x0: number; y0: number }
-  | { mode: "pinch"; id: string; dist0: number; size0: number };
+  | { mode: "pinch"; id: string; dist0: number; size0: number; ang0: number; rot0: number };
 
-// Lapisan di atas preview: ketuk untuk memilih, seret untuk memindah, cubit untuk mengubah ukuran
+// Lapisan di atas preview: ketuk untuk memilih, seret untuk memindah, cubit untuk ukuran, putar dua jari untuk memutar
 export const PreviewOverlay: React.FC<{
   layers: Layer[];
   selectedId: string;
+  canvas: { w: number; h: number };
   playerRef: React.RefObject<PlayerRef>;
   onSelect: (id: string) => void;
   onChange: (id: string, patch: Record<string, unknown>, key: string) => void;
-}> = ({ layers, selectedId, playerRef, onSelect, onChange }) => {
+}> = ({ layers, selectedId, canvas, playerRef, onSelect, onChange }) => {
   const rootRef = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(360);
   const [frame, setFrame] = useState(0);
   const [guides, setGuides] = useState({ v: false, h: false });
   const pointers = useRef(new Map<number, { x: number; y: number }>());
   const gesture = useRef<Gesture | null>(null);
-  const s = width / FULL_W;
+  const s = width / canvas.w;
 
   useEffect(() => {
     const el = rootRef.current;
@@ -66,10 +74,19 @@ export const PreviewOverlay: React.FC<{
     return { px: (e.clientX - rect.left) / s, py: (e.clientY - rect.top) / s };
   };
 
+  // Uji sentuh dengan memperhitungkan putaran layer
   const hit = (l: VisualLayer, px: number, py: number, pad = 0) => {
-    const b = boxOf(l);
-    return Math.abs(px - l.x) <= b.w / 2 + pad && Math.abs(py - l.y) <= b.h / 2 + pad;
+    const b = boxOf(l, canvas.w);
+    const r = (-(l.rotation ?? 0) * Math.PI) / 180;
+    const dx = px - l.x;
+    const dy = py - l.y;
+    const lx = dx * Math.cos(r) - dy * Math.sin(r);
+    const ly = dx * Math.sin(r) + dy * Math.cos(r);
+    return Math.abs(lx) <= b.w / 2 + pad && Math.abs(ly) <= b.h / 2 + pad;
   };
+
+  const angleOf = (a: { x: number; y: number }, b: { x: number; y: number }) =>
+    (Math.atan2(b.y - a.y, b.x - a.x) * 180) / Math.PI;
 
   const onPointerDown = (e: React.PointerEvent) => {
     rootRef.current?.setPointerCapture(e.pointerId);
@@ -84,6 +101,8 @@ export const PreviewOverlay: React.FC<{
         id: selected.id,
         dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
         size0: selected.type === "text" ? selected.size : selected.width,
+        ang0: angleOf(a, b),
+        rot0: selected.rotation ?? 0,
       };
       return;
     }
@@ -116,22 +135,26 @@ export const PreviewOverlay: React.FC<{
     if (!g) return;
 
     if (g.mode === "move" && pointers.current.size === 1) {
-      let x = clamp(Math.round(g.x0 + (e.clientX - g.startX) / s), 0, FULL_W);
-      let y = clamp(Math.round(g.y0 + (e.clientY - g.startY) / s), 0, FULL_H);
-      const snapX = Math.abs(x - FULL_W / 2) < SNAP;
-      const snapY = Math.abs(y - FULL_H / 2) < SNAP;
-      if (snapX) x = FULL_W / 2;
-      if (snapY) y = FULL_H / 2;
+      let x = clamp(Math.round(g.x0 + (e.clientX - g.startX) / s), 0, canvas.w);
+      let y = clamp(Math.round(g.y0 + (e.clientY - g.startY) / s), 0, canvas.h);
+      const snapX = Math.abs(x - canvas.w / 2) < SNAP;
+      const snapY = Math.abs(y - canvas.h / 2) < SNAP;
+      if (snapX) x = canvas.w / 2;
+      if (snapY) y = canvas.h / 2;
       setGuides({ v: snapX, h: snapY });
       onChange(g.id, { x, y }, `pdrag:${g.id}`);
     } else if (g.mode === "pinch" && pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       const ratio = (Math.hypot(a.x - b.x, a.y - b.y) || 1) / g.dist0;
+      let delta = angleOf(a, b) - g.ang0;
+      delta = ((((delta + 180) % 360) + 360) % 360) - 180;
+      const turn = Math.abs(delta) > ROT_DEAD ? delta - Math.sign(delta) * ROT_DEAD : 0;
+      const rotation = turn ? normDeg(g.rot0 + turn) : g.rot0;
       const layer = layers.find((l) => l.id === g.id);
       if (layer?.type === "text") {
-        onChange(g.id, { size: clamp(Math.round((g.size0 * ratio) / 5) * 5, 20, 800) }, `pinch:${g.id}`);
+        onChange(g.id, { size: clamp(Math.round((g.size0 * ratio) / 5) * 5, 20, 800), rotation }, `pinch:${g.id}`);
       } else if (layer?.type === "media") {
-        onChange(g.id, { width: clamp(Math.round((g.size0 * ratio) / 10) * 10, 100, 5120) }, `pinch:${g.id}`);
+        onChange(g.id, { width: clamp(Math.round((g.size0 * ratio) / 10) * 10, 100, canvas.w * 2), rotation }, `pinch:${g.id}`);
       }
     }
   };
@@ -147,7 +170,7 @@ export const PreviewOverlay: React.FC<{
 
   const t = frame / FPS;
   const sel = layers.find((l) => l.id === selectedId);
-  const box = sel && visibleAt(sel, t) ? { l: sel, b: boxOf(sel) } : null;
+  const box = sel && visibleAt(sel, t) ? { l: sel, b: boxOf(sel, canvas.w) } : null;
 
   return (
     <div
@@ -168,6 +191,7 @@ export const PreviewOverlay: React.FC<{
             top: (box.l.y - box.b.h / 2) * s,
             width: box.b.w * s,
             height: box.b.h * s,
+            transform: `rotate(${box.l.rotation ?? 0}deg)`,
           }}
         >
           <i className="tl" />

@@ -21,18 +21,23 @@ import {
   Background,
   DEFAULT_BG,
   FPS,
-  FULL_H,
-  FULL_W,
   Layer,
   MediaLayer,
   Project,
+  Ratio,
   TextLayer,
+  canvasOf,
   defaultProject,
   isVisual,
 } from "./types";
 
-const PREVIEW_H = 360; // live preview 360p
-const previewScale = PREVIEW_H / FULL_H; // 0.25
+const PREVIEW_SHORT = 360; // live preview 360p (sisi terpendek)
+
+const RATIOS: { id: Ratio; label: string; hint: string; stage: number }[] = [
+  { id: "16:9", label: "16:9", hint: "Mendatar", stage: 0.5625 },
+  { id: "9:16", label: "9:16", hint: "Vertikal", stage: 0.78 },
+  { id: "1:1", label: "1:1", hint: "Kotak", stage: 0.66 },
+];
 
 const SWATCHES = ["#FFFFFF", "#FFB84D", "#FF4F8B", "#34C6B4", "#9A8CFF", "#1F2937"];
 
@@ -58,7 +63,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const half = (n: number) => Math.max(0.5, Math.round(n * 2) / 2);
 
-type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar";
+type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar" | "rasio" | "gaya";
 type Hist = { present: Project; past: Project[]; future: Project[] };
 
 const PANEL_TITLE: Record<Panel, string> = {
@@ -70,6 +75,8 @@ const PANEL_TITLE: Record<Panel, string> = {
   anim: "Animasi",
   volume: "Volume",
   latar: "Latar",
+  rasio: "Rasio video",
+  gaya: "Tampilan",
 };
 
 const fmt = (s: number) => {
@@ -171,6 +178,9 @@ export const App: React.FC = () => {
   const lastEdit = useRef({ key: "", t: 0 });
   const project = hist.present;
   const bg = project.background ?? DEFAULT_BG;
+  const canvas = canvasOf(project.ratio);
+  const previewScale = PREVIEW_SHORT / Math.min(canvas.w, canvas.h); // 0.25
+  const ratioInfo = RATIOS.find((r) => r.id === (project.ratio ?? "16:9")) ?? RATIOS[0];
 
   const [selectedId, setSelectedId] = useState("");
   const [panel, setPanel] = useState<Panel | null>(null);
@@ -184,7 +194,7 @@ export const App: React.FC = () => {
   const toastTimer = useRef<number | undefined>(undefined);
 
   const selected = project.layers.find((l) => l.id === selectedId);
-  const activePanel: Panel | null = panel === "durasi" || panel === "latar" || (panel && selected) ? panel : null;
+  const activePanel: Panel | null = panel === "durasi" || panel === "latar" || panel === "rasio" || (panel && selected) ? panel : null;
 
   // ---- Riwayat (undo/redo) ----
   const commit = (h: Hist) => {
@@ -278,6 +288,27 @@ export const App: React.FC = () => {
 
   const setBg = (patch: Partial<Background>) => apply((p) => ({ ...p, background: { ...(p.background ?? DEFAULT_BG), ...patch } }), "latar");
 
+  // Ganti rasio: posisi dan ukuran layer ikut menyesuaikan supaya susunannya tetap
+  const setRatio = (r: Ratio) => {
+    const from = canvasOf(project.ratio);
+    const to = canvasOf(r);
+    if (from.w === to.w && from.h === to.h) return;
+    const fx = to.w / from.w;
+    const fy = to.h / from.h;
+    const fs = Math.min(fx, fy);
+    apply((p) => ({
+      ...p,
+      ratio: r,
+      layers: p.layers.map((l) =>
+        l.type === "text"
+          ? { ...l, x: Math.round(l.x * fx), y: Math.round(l.y * fy), size: Math.max(20, Math.round((l.size * fs) / 5) * 5) }
+          : l.type === "media"
+            ? { ...l, x: Math.round(l.x * fx), y: Math.round(l.y * fy), width: Math.max(100, Math.round((l.width * fs) / 10) * 10) }
+            : l,
+      ),
+    }));
+  };
+
   const selectLayer = (id: string) => {
     if (id !== selectedId) setPanel(null);
     setSelectedId(id);
@@ -305,8 +336,8 @@ export const App: React.FC = () => {
       type: "text",
       id: uid(),
       text: "Teks baru",
-      x: FULL_W / 2,
-      y: FULL_H / 2,
+      x: canvas.w / 2,
+      y: canvas.h / 2,
       size: 120,
       color: "#ffffff",
       font: "manrope",
@@ -340,9 +371,9 @@ export const App: React.FC = () => {
         thumb: meta.thumb,
         aspect: meta.aspect,
         mediaDuration: meta.duration,
-        x: FULL_W / 2,
-        y: FULL_H / 2,
-        width: 1280,
+        x: canvas.w / 2,
+        y: canvas.h / 2,
+        width: Math.round((canvas.w * 0.5) / 20) * 20,
         trim: 0,
         start: 0,
         duration: isVideo ? Math.min(project.duration, half(meta.duration ?? 5)) : project.duration,
@@ -403,7 +434,7 @@ export const App: React.FC = () => {
     if (!selected) return;
     const copy = (
       isVisual(selected)
-        ? { ...selected, id: uid(), x: Math.min(FULL_W, selected.x + 80), y: Math.min(FULL_H, selected.y + 80) }
+        ? { ...selected, id: uid(), x: Math.min(canvas.w, selected.x + 80), y: Math.min(canvas.h, selected.y + 80) }
         : { ...selected, id: uid() }
     ) as Layer;
     apply((p) => {
@@ -497,6 +528,7 @@ export const App: React.FC = () => {
       { icon: "media", label: "Media", file: "media" },
       { icon: "music", label: "Audio", file: "audio" },
       { icon: "palette", label: "Latar", onClick: () => setPanel("latar") },
+      { icon: "ratio", label: "Rasio", onClick: () => setPanel("rasio") },
       { icon: "clock", label: "Durasi", onClick: () => setPanel("durasi") },
     ];
   } else if (selected.type === "text") {
@@ -504,6 +536,7 @@ export const App: React.FC = () => {
       back,
       { icon: "pencil", label: "Edit", onClick: () => setPanel("edit") },
       { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
+      { icon: "rotate", label: "Tampilan", onClick: () => setPanel("gaya") },
       { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
       { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
       ...editTools,
@@ -516,6 +549,7 @@ export const App: React.FC = () => {
       { icon: "resize", label: "Ukuran", onClick: () => setPanel("ukuran") },
       ...(selected.kind === "video" ? [{ icon: "volume", label: "Volume", onClick: () => setPanel("volume") } as Tool] : []),
       { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
+      { icon: "rotate", label: "Tampilan", onClick: () => setPanel("gaya") },
       { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
       { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
       ...editTools,
@@ -545,28 +579,31 @@ export const App: React.FC = () => {
         </button>
       </header>
 
-      <div className="stage">
-        <Player
-          ref={playerRef}
-          component={Video}
-          inputProps={{ project, scale: previewScale }}
-          durationInFrames={Math.max(1, Math.round(project.duration * FPS))}
-          fps={FPS}
-          compositionWidth={Math.round(FULL_W * previewScale)}
-          compositionHeight={PREVIEW_H}
-          style={{ width: "100%", display: "block" }}
-          controls={false}
-          clickToPlay={false}
-          allowFullscreen={false}
-          loop
-        />
-        <PreviewOverlay
-          layers={project.layers}
-          selectedId={selectedId}
-          playerRef={playerRef}
-          onSelect={selectLayer}
-          onChange={patchLayer}
-        />
+      <div className="stage" style={{ height: `calc(min(100vw, 560px) * ${ratioInfo.stage})` }}>
+        <div className="player-box" data-ratio={ratioInfo.id}>
+          <Player
+            ref={playerRef}
+            component={Video}
+            inputProps={{ project, scale: previewScale }}
+            durationInFrames={Math.max(1, Math.round(project.duration * FPS))}
+            fps={FPS}
+            compositionWidth={Math.round(canvas.w * previewScale)}
+            compositionHeight={Math.round(canvas.h * previewScale)}
+            style={{ width: "100%", display: "block" }}
+            controls={false}
+            clickToPlay={false}
+            allowFullscreen={false}
+            loop
+          />
+          <PreviewOverlay
+            layers={project.layers}
+            selectedId={selectedId}
+            canvas={canvas}
+            playerRef={playerRef}
+            onSelect={selectLayer}
+            onChange={patchLayer}
+          />
+        </div>
       </div>
 
       <Controls
@@ -606,6 +643,55 @@ export const App: React.FC = () => {
             <div className="toolpanel-body">
               {activePanel === "durasi" && (
                 <Slider label="Durasi video" unit=" dtk" value={project.duration} min={1} max={60} onChange={setDuration} />
+              )}
+
+              {activePanel === "rasio" && (
+                <>
+                  <div className="chip-grid">
+                    {RATIOS.map((r) => (
+                      <button
+                        key={r.id}
+                        className="chip two"
+                        aria-pressed={(project.ratio ?? "16:9") === r.id}
+                        onClick={() => setRatio(r.id)}
+                      >
+                        <b>{r.label}</b>
+                        <small>{r.hint}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <p className="hint-line">
+                    Vertikal 9:16 cocok untuk TikTok, Reels, dan Shorts. Posisi dan ukuran layer ikut menyesuaikan.
+                  </p>
+                </>
+              )}
+
+              {activePanel === "gaya" && visualSel && (
+                <>
+                  <div className="grid2">
+                    <Slider
+                      label="Rotasi"
+                      unit="°"
+                      value={Math.round(visualSel.rotation ?? 0)}
+                      min={-180}
+                      max={180}
+                      step={5}
+                      onChange={(v) => updateLayer({ rotation: v })}
+                    />
+                    <Slider
+                      label="Opasitas"
+                      unit="%"
+                      value={Math.round((visualSel.opacity ?? 1) * 100)}
+                      min={0}
+                      max={100}
+                      step={5}
+                      onChange={(v) => updateLayer({ opacity: v / 100 })}
+                    />
+                  </div>
+                  <button className="chip wide" aria-pressed={!!visualSel.flip} onClick={() => updateLayer({ flip: !visualSel.flip })}>
+                    Balik horizontal
+                  </button>
+                </>
               )}
 
               {activePanel === "latar" && (
@@ -720,7 +806,7 @@ export const App: React.FC = () => {
 
               {activePanel === "ukuran" && selected?.type === "media" && (
                 <>
-                  <Slider label="Lebar" value={selected.width} min={100} max={FULL_W} step={20} onChange={(v) => updateLayer({ width: v })} />
+                  <Slider label="Lebar" value={selected.width} min={100} max={canvas.w} step={20} onChange={(v) => updateLayer({ width: v })} />
                   {selected.kind === "video" && (
                     <Slider
                       label="Potong awal klip"
@@ -762,8 +848,8 @@ export const App: React.FC = () => {
 
               {activePanel === "posisi" && visualSel && (
                 <div className="grid2">
-                  <Slider label="Posisi X" value={visualSel.x} min={0} max={FULL_W} step={10} onChange={(v) => updateLayer({ x: v })} />
-                  <Slider label="Posisi Y" value={visualSel.y} min={0} max={FULL_H} step={10} onChange={(v) => updateLayer({ y: v })} />
+                  <Slider label="Posisi X" value={visualSel.x} min={0} max={canvas.w} step={10} onChange={(v) => updateLayer({ x: v })} />
+                  <Slider label="Posisi Y" value={visualSel.y} min={0} max={canvas.h} step={10} onChange={(v) => updateLayer({ y: v })} />
                 </div>
               )}
 

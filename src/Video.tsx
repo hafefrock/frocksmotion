@@ -20,12 +20,11 @@ import {
   AudioLayer,
   DEFAULT_BG,
   FPS,
-  FULL_H,
-  FULL_W,
   Layer,
   MediaLayer,
   Project,
   TextLayer,
+  canvasOf,
 } from "./types";
 
 export type VideoProps = { project: Project; scale: number };
@@ -69,17 +68,25 @@ const animStyle = (anim: Anim, frame: number, fps: number, durFrames: number, ou
   return { opacity, transform: `translate(${tx}px, ${ty}px) scale(${scale})` };
 };
 
-const TextItem: React.FC<{ layer: TextLayer; durFrames: number }> = ({ layer, durFrames }) => {
+const TextItem: React.FC<{ layer: TextLayer; durFrames: number; cw: number }> = ({ layer, durFrames, cw }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const font = fontOf(layer.font);
   return (
-    <div style={{ position: "absolute", left: layer.x, top: layer.y, transform: "translate(-50%, -50%)" }}>
+    <div
+      style={{
+        position: "absolute",
+        left: layer.x,
+        top: layer.y,
+        opacity: layer.opacity ?? 1,
+        transform: `translate(-50%, -50%) rotate(${layer.rotation ?? 0}deg)`,
+      }}
+    >
       <div
         style={{
           ...animStyle(layer.anim ?? "slideUp", frame, fps, durFrames, !!layer.animOut),
           width: "max-content",
-          maxWidth: FULL_W * 0.9,
+          maxWidth: cw * 0.9,
           color: layer.color,
           fontSize: layer.size,
           fontFamily: font.family,
@@ -89,7 +96,7 @@ const TextItem: React.FC<{ layer: TextLayer; durFrames: number }> = ({ layer, du
           whiteSpace: "pre-wrap",
         }}
       >
-        {layer.text}
+        <div style={{ transform: layer.flip ? "scaleX(-1)" : undefined }}>{layer.text}</div>
       </div>
     </div>
   );
@@ -102,13 +109,24 @@ const MediaItem: React.FC<{ layer: MediaLayer; durFrames: number }> = ({ layer, 
   const src = layer.src ?? staticFile(layer.name);
   const fill: React.CSSProperties = { width: "100%", height: "auto", display: "block" };
   return (
-    <div style={{ position: "absolute", left: layer.x, top: layer.y, width: layer.width, transform: "translate(-50%, -50%)" }}>
+    <div
+      style={{
+        position: "absolute",
+        left: layer.x,
+        top: layer.y,
+        width: layer.width,
+        opacity: layer.opacity ?? 1,
+        transform: `translate(-50%, -50%) rotate(${layer.rotation ?? 0}deg)`,
+      }}
+    >
       <div style={animStyle(layer.anim ?? "none", frame, fps, durFrames, !!layer.animOut)}>
-        {layer.kind === "image" ? (
-          <Img src={src} style={fill} />
-        ) : (
-          <OffthreadVideo src={src} startFrom={Math.round(layer.trim * FPS)} volume={layer.volume ?? 1} style={fill} />
-        )}
+        <div style={{ transform: layer.flip ? "scaleX(-1)" : undefined }}>
+          {layer.kind === "image" ? (
+            <Img src={src} style={fill} />
+          ) : (
+            <OffthreadVideo src={src} startFrom={Math.round(layer.trim * FPS)} volume={layer.volume ?? 1} style={fill} />
+          )}
+        </div>
       </div>
     </div>
   );
@@ -118,9 +136,9 @@ const AudioItem: React.FC<{ layer: AudioLayer }> = ({ layer }) => (
   <Audio src={layer.src ?? staticFile(layer.name)} startFrom={Math.round(layer.trim * FPS)} volume={layer.volume} />
 );
 
-const Item: React.FC<{ layer: Layer; durFrames: number }> = ({ layer, durFrames }) =>
+const Item: React.FC<{ layer: Layer; durFrames: number; cw: number }> = ({ layer, durFrames, cw }) =>
   layer.type === "text" ? (
-    <TextItem layer={layer} durFrames={durFrames} />
+    <TextItem layer={layer} durFrames={durFrames} cw={cw} />
   ) : layer.type === "media" ? (
     <MediaItem layer={layer} durFrames={durFrames} />
   ) : (
@@ -137,11 +155,12 @@ const useFontsReady = () => {
   }, [handle]);
 };
 
-// Desain selalu di kanvas 2560x1440. `scale` mengecilkan hasil gambar
+// Ukuran kanvas desain mengikuti rasio proyek (16:9 = 2560x1440). `scale` mengecilkan hasil gambar
 // (live preview 360p). Ekspor 1080p/720p memakai --scale dari CLI.
 // Urutan layer: yang pertama di daftar ada paling bawah.
 export const Video: React.FC<VideoProps> = ({ project, scale }) => {
   useFontsReady();
+  const { w: cw, h: ch } = canvasOf(project.ratio);
   const bg = project.background ?? DEFAULT_BG;
   const background = bg.mode === "solid" ? bg.a : `linear-gradient(135deg, ${bg.a}, ${bg.b})`;
 
@@ -150,8 +169,8 @@ export const Video: React.FC<VideoProps> = ({ project, scale }) => {
       <div
         style={{
           position: "relative",
-          width: FULL_W,
-          height: FULL_H,
+          width: cw,
+          height: ch,
           flexShrink: 0,
           overflow: "hidden",
           transform: `scale(${scale})`,
@@ -163,7 +182,7 @@ export const Video: React.FC<VideoProps> = ({ project, scale }) => {
           const durFrames = Math.max(1, Math.round(l.duration * FPS));
           return (
             <Sequence key={l.id} from={Math.round(l.start * FPS)} durationInFrames={durFrames} layout="none">
-              <Item layer={l} durFrames={durFrames} />
+              <Item layer={l} durFrames={durFrames} cw={cw} />
             </Sequence>
           );
         })}

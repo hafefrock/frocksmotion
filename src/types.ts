@@ -1,6 +1,10 @@
-export const FULL_W = 2560;
-export const FULL_H = 1440;
 export const FPS = 30;
+
+export type Ratio = "16:9" | "9:16" | "1:1";
+
+// Ukuran kanvas desain per rasio (sisi terpanjang maksimal 2K)
+export const canvasOf = (r?: Ratio) =>
+  r === "9:16" ? { w: 1440, h: 2560 } : r === "1:1" ? { w: 1440, h: 1440 } : { w: 2560, h: 1440 };
 
 export type Anim = "none" | "fade" | "slideUp" | "slideLeft" | "zoom" | "pop";
 export type FontId = "manrope" | "syne" | "playfair" | "bebas" | "caveat" | "mono";
@@ -14,6 +18,9 @@ export type TextLayer = {
   size: number; // ukuran huruf, koordinat 2K
   color: string;
   font?: FontId; // bawaan: manrope
+  rotation?: number; // derajat
+  opacity?: number; // 0..1, bawaan 1
+  flip?: boolean; // balik horizontal
   anim?: Anim; // animasi masuk, bawaan: slideUp
   animOut?: boolean; // pudar di akhir
   start: number; // detik
@@ -35,6 +42,9 @@ export type MediaLayer = {
   width: number; // lebar di koordinat 2K, tinggi mengikuti rasio asli
   trim: number; // potong bagian awal klip (detik)
   volume?: number; // 0..1, hanya untuk video (bawaan 1)
+  rotation?: number; // derajat
+  opacity?: number; // 0..1, bawaan 1
+  flip?: boolean; // balik horizontal
   anim?: Anim; // bawaan: none
   animOut?: boolean;
   start: number;
@@ -69,6 +79,7 @@ export const DEFAULT_BG: Background = { mode: "gradient", a: "#1e3a8a", b: "#3b8
 
 export type Project = {
   duration: number; // detik
+  ratio?: Ratio; // bawaan: 16:9
   background?: Background;
   layers: Layer[];
 };

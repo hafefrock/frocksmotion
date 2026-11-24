@@ -803,3 +803,47 @@ input[type="range"]::-webkit-slider-thumb {
   border-radius: 12px;
   background: none;
 }
+
+/* ---------- Rasio video dan tampilan ---------- */
+.stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.player-box {
+  position: relative;
+  height: 100%;
+}
+
+.player-box[data-ratio="9:16"] {
+  aspect-ratio: 9 / 16;
+}
+
+.player-box[data-ratio="1:1"] {
+  aspect-ratio: 1 / 1;
+}
+
+.player-box[data-ratio="16:9"] {
+  aspect-ratio: 16 / 9;
+  width: 100% !important;
+  height: auto;
+}
+
+.chip.two {
+  display: grid;
+  gap: 2px;
+  padding: 6px 8px;
+}
+
+.chip.two small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.hint-line {
+  color: var(--muted);
+  font-size: 13px;
+}
