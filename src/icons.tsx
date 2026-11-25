@@ -101,6 +101,13 @@ const paths = {
       <path d="M20 4v7h-7" />
     </>
   ),
+  folder: <path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7z" />,
+  layers: (
+    <>
+      <path d="M12 3l9 5-9 5-9-5 9-5z" />
+      <path d="M3 13l9 5 9-5" />
+    </>
+  ),
   export: (
     <>
       <path d="M12 15V4M8 8l4-4 4 4" />

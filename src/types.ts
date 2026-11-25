@@ -18,6 +18,13 @@ export type TextLayer = {
   size: number; // ukuran huruf, koordinat 2K
   color: string;
   font?: FontId; // bawaan: manrope
+  align?: "left" | "center" | "right"; // rata teks (terlihat pada teks beberapa baris), bawaan tengah
+  spacing?: number; // jarak antarhuruf, koordinat kanvas
+  strokeW?: number; // tebal garis tepi, 0 = tanpa
+  strokeColor?: string;
+  shadow?: number; // 0..100
+  bgColor?: string; // warna kotak di belakang teks
+  bgOpacity?: number; // 0..1, 0 = tanpa kotak
   rotation?: number; // derajat
   opacity?: number; // 0..1, bawaan 1
   flip?: boolean; // balik horizontal

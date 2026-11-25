@@ -68,10 +68,19 @@ const animStyle = (anim: Anim, frame: number, fps: number, durFrames: number, ou
   return { opacity, transform: `translate(${tx}px, ${ty}px) scale(${scale})` };
 };
 
+const rgba = (hex: string, a: number) => {
+  const h = hex.replace("#", "");
+  const n = parseInt(h.length === 3 ? h.replace(/./g, "$&$&") : h, 16);
+  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${a})`;
+};
+
 const TextItem: React.FC<{ layer: TextLayer; durFrames: number; cw: number }> = ({ layer, durFrames, cw }) => {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const font = fontOf(layer.font);
+  const k = (layer.shadow ?? 0) / 100;
+  const boxOn = (layer.bgOpacity ?? 0) > 0;
+  const pad = layer.size * 0.18;
   return (
     <div
       style={{
@@ -92,8 +101,16 @@ const TextItem: React.FC<{ layer: TextLayer; durFrames: number; cw: number }> = 
           fontFamily: font.family,
           fontWeight: font.weight,
           lineHeight: 1.15,
-          textAlign: "center",
+          textAlign: layer.align ?? "center",
           whiteSpace: "pre-wrap",
+          letterSpacing: layer.spacing ? `${layer.spacing}px` : undefined,
+          WebkitTextStroke: layer.strokeW ? `${layer.strokeW}px ${layer.strokeColor ?? "#000000"}` : undefined,
+          paintOrder: "stroke fill",
+          textShadow:
+            k > 0 ? `0 ${layer.size * 0.05 * k}px ${layer.size * 0.12 * k}px rgba(0, 0, 0, ${0.3 + 0.5 * k})` : undefined,
+          background: boxOn ? rgba(layer.bgColor ?? "#000000", layer.bgOpacity ?? 0) : undefined,
+          padding: boxOn ? `${pad}px ${pad * 2}px` : undefined,
+          borderRadius: boxOn ? layer.size * 0.25 : undefined,
         }}
       >
         <div style={{ transform: layer.flip ? "scaleX(-1)" : undefined }}>{layer.text}</div>

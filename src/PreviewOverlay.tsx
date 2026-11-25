@@ -11,12 +11,15 @@ let measureCtx: CanvasRenderingContext2D | null = null;
 const measureText = (l: TextLayer, cw: number) => {
   measureCtx ??= document.createElement("canvas").getContext("2d");
   const f = fontOf(l.font);
+  const lines = l.text.split("\n");
+  const sp = l.spacing ?? 0;
   let w = l.size * 2;
   if (measureCtx) {
     measureCtx.font = `${f.weight} ${l.size}px ${f.family}`;
-    w = Math.max(...l.text.split("\n").map((line) => measureCtx!.measureText(line).width));
+    w = Math.max(...lines.map((line) => measureCtx!.measureText(line).width + sp * line.length));
   }
-  return { w: Math.min(Math.max(w, l.size), cw * 0.9), h: l.text.split("\n").length * l.size * 1.15 };
+  const pad = (l.bgOpacity ?? 0) > 0 ? l.size * 0.18 : 0;
+  return { w: Math.min(Math.max(w, l.size), cw * 0.9) + pad * 4, h: lines.length * l.size * 1.15 + pad * 2 };
 };
 
 // Kotak pembatas layer di koordinat kanvas
