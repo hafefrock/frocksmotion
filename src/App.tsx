@@ -7,13 +7,18 @@ import { PreviewOverlay } from "./PreviewOverlay";
 import { Timeline } from "./Timeline";
 import { Video } from "./Video";
 import {
-  deleteFile,
+  ProjectMeta,
+  deleteUnusedFiles,
+  ensureProjects,
   hydrateProject,
-  loadSavedProject,
+  loadProject,
   parseProject,
   putFile,
-  saveProject,
+  removeProjectData,
+  saveIndex,
+  saveProjectData,
   serializeProject,
+  setCurrentId as storeCurrentId,
 } from "./storage";
 import {
   Anim,
@@ -39,7 +44,7 @@ const RATIOS: { id: Ratio; label: string; hint: string; stage: number }[] = [
   { id: "1:1", label: "1:1", hint: "Kotak", stage: 0.66 },
 ];
 
-const SWATCHES = ["#FFFFFF", "#FFB84D", "#FF4F8B", "#34C6B4", "#9A8CFF", "#1F2937"];
+const SWATCHES = ["#FFFFFF", "#FFB84D", "#FF4F8B", "#34C6B4", "#9A8CFF", "#000000"];
 
 const BG_PRESETS: [string, string][] = [
   ["#1e3a8a", "#3b82f6"],
@@ -63,7 +68,7 @@ const uid = () => Math.random().toString(36).slice(2, 9);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const half = (n: number) => Math.max(0.5, Math.round(n * 2) / 2);
 
-type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar" | "rasio" | "gaya";
+type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar" | "rasio" | "gaya" | "teksgaya";
 type Hist = { present: Project; past: Project[]; future: Project[] };
 
 const PANEL_TITLE: Record<Panel, string> = {
@@ -77,12 +82,48 @@ const PANEL_TITLE: Record<Panel, string> = {
   latar: "Latar",
   rasio: "Rasio video",
   gaya: "Tampilan",
+  teksgaya: "Gaya teks",
 };
 
 const fmt = (s: number) => {
   const m = Math.floor(s / 60);
   return `${m}:${(s - m * 60).toFixed(1).padStart(4, "0")}`;
 };
+
+const ago = (t: number) => {
+  const sec = Math.max(0, (Date.now() - t) / 1000);
+  if (sec < 60) return "baru saja";
+  if (sec < 3600) return `${Math.floor(sec / 60)} mnt lalu`;
+  if (sec < 86400) return `${Math.floor(sec / 3600)} jam lalu`;
+  return `${Math.floor(sec / 86400)} hari lalu`;
+};
+
+const ColorRow: React.FC<{ label: string; value: string; onChange: (c: string) => void }> = ({ label, value, onChange }) => (
+  <div className="field">
+    <span className="field-row">
+      <span>{label}</span>
+    </span>
+    <div className="swatches">
+      {SWATCHES.map((c) => (
+        <button
+          key={c}
+          className="swatch"
+          aria-label={`${label} ${c}`}
+          aria-pressed={value.toLowerCase() === c.toLowerCase()}
+          style={{ background: c }}
+          onClick={() => onChange(c)}
+        />
+      ))}
+      <input
+        className="swatch-custom"
+        type="color"
+        aria-label={`${label} lain`}
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+      />
+    </div>
+  </div>
+);
 
 const Slider: React.FC<{
   label: string;
@@ -185,13 +226,25 @@ export const App: React.FC = () => {
   const [selectedId, setSelectedId] = useState("");
   const [panel, setPanel] = useState<Panel | null>(null);
   const [exportOpen, setExportOpen] = useState(false);
-  const [loaded, setLoaded] = useState(false);
+  const [loaded, setLoadedState] = useState(false);
+  const loadedRef = useRef(false);
+  const setLoaded = (v: boolean) => {
+    loadedRef.current = v;
+    setLoadedState(v);
+  };
   const [importText, setImportText] = useState("");
   const [copied, setCopied] = useState(false);
   const [toast, setToast] = useState("");
   const playerRef = useRef<PlayerRef>(null);
   const exportRef = useRef<HTMLTextAreaElement>(null);
   const toastTimer = useRef<number | undefined>(undefined);
+  const [projects, setProjects] = useState<ProjectMeta[]>([]);
+  const [currentId, setCurrentIdState] = useState("");
+  const [projectsOpen, setProjectsOpen] = useState(false);
+  const listRef = useRef<ProjectMeta[]>([]);
+  const currentRef = useRef("");
+  const lastSaved = useRef<Project | null>(null);
+  const currentName = projects.find((m) => m.id === currentId)?.name ?? "Proyek";
 
   const selected = project.layers.find((l) => l.id === selectedId);
   const activePanel: Panel | null = panel === "durasi" || panel === "latar" || panel === "rasio" || (panel && selected) ? panel : null;
@@ -233,48 +286,159 @@ export const App: React.FC = () => {
     toastTimer.current = window.setTimeout(() => setToast(""), 2200);
   };
 
-  // ---- Muat dan simpan otomatis ----
+  // ---- Daftar proyek, muat, dan simpan otomatis ----
+  const setList = (list: ProjectMeta[]) => {
+    listRef.current = list;
+    setProjects(list);
+    saveIndex(list);
+  };
+
+  const touch = (id: string) => setList(listRef.current.map((m) => (m.id === id ? { ...m, updated: Date.now() } : m)));
+
+  // Tampilkan proyek di editor. Gambar mini dibuat belakangan supaya app cepat terbuka.
+  const showProject = async (p: Project) => {
+    setSelectedId("");
+    setPanel(null);
+    const hydrated = await hydrateProject(p);
+    commit({ present: hydrated, past: [], future: [] });
+    lastSaved.current = hydrated;
+    setLoaded(true);
+
+    const thumbs = new Map<string, string>();
+    await Promise.all(
+      hydrated.layers.map(async (l) => {
+        if (l.type === "media" && l.src) {
+          const meta = await probe(l.src, l.kind);
+          if (meta.thumb) thumbs.set(l.id, meta.thumb);
+        }
+      }),
+    );
+    if (thumbs.size && histRef.current.present === hydrated) {
+      const cur = histRef.current;
+      const next = {
+        ...cur.present,
+        layers: cur.present.layers.map((l) => (l.type === "media" && thumbs.has(l.id) ? { ...l, thumb: thumbs.get(l.id) } : l)),
+      };
+      commit({ ...cur, present: next });
+      lastSaved.current = next;
+    }
+  };
+
+  // Simpan proyek yang sedang dibuka sebelum pindah ke proyek lain
+  const flushSave = () => {
+    const id = currentRef.current;
+    const p = histRef.current.present;
+    if (id && loadedRef.current && p !== lastSaved.current) {
+      saveProjectData(id, p);
+      lastSaved.current = p;
+      touch(id);
+    }
+  };
+
+  const switchTo = async (id: string, p: Project) => {
+    setLoaded(false);
+    currentRef.current = id;
+    storeCurrentId(id);
+    setCurrentIdState(id);
+    await showProject(p);
+  };
+
+  const nextName = (base: string, numbered: boolean) => {
+    const names = new Set(listRef.current.map((m) => m.name));
+    if (numbered) {
+      let n = listRef.current.length + 1;
+      while (names.has(`${base} ${n}`)) n++;
+      return `${base} ${n}`;
+    }
+    if (!names.has(base)) return base;
+    let n = 2;
+    while (names.has(`${base} ${n}`)) n++;
+    return `${base} ${n}`;
+  };
+
+  const openProject = async (id: string) => {
+    setProjectsOpen(false);
+    if (id === currentRef.current) return;
+    flushSave();
+    await switchTo(id, loadProject(id) ?? defaultProject);
+  };
+
+  const createProject = async (data?: Project, name?: string) => {
+    setProjectsOpen(false);
+    flushSave();
+    const id = uid();
+    const proj = data ?? defaultProject;
+    saveProjectData(id, proj);
+    setList([{ id, name: name ?? nextName("Proyek", true), updated: Date.now() }, ...listRef.current]);
+    await switchTo(id, proj);
+  };
+
+  const renameProject = (id: string) => {
+    const m = listRef.current.find((x) => x.id === id);
+    if (!m) return;
+    const name = window.prompt("Nama proyek", m.name)?.trim();
+    if (name) setList(listRef.current.map((x) => (x.id === id ? { ...x, name } : x)));
+  };
+
+  const duplicateProject = (id: string) => {
+    const m = listRef.current.find((x) => x.id === id);
+    const data = id === currentRef.current ? histRef.current.present : loadProject(id);
+    if (!m || !data) return;
+    const nid = uid();
+    saveProjectData(nid, data);
+    setList([{ id: nid, name: `${m.name} salinan`, updated: Date.now() }, ...listRef.current]);
+  };
+
+  const deleteProject = async (id: string) => {
+    const m = listRef.current.find((x) => x.id === id);
+    if (!m || !window.confirm(`Hapus proyek "${m.name}"? Ini tidak bisa dibatalkan.`)) return;
+    const wasCurrent = id === currentRef.current;
+    const data = wasCurrent ? histRef.current.present : loadProject(id);
+    const rest = listRef.current.filter((x) => x.id !== id);
+    if (wasCurrent) setLoaded(false);
+    removeProjectData(id);
+    const restData = rest.map((x) => loadProject(x.id)).filter((x): x is Project => !!x);
+    if (data) await deleteUnusedFiles(data, restData);
+
+    if (rest.length === 0) {
+      const nid = uid();
+      saveProjectData(nid, defaultProject);
+      setList([{ id: nid, name: "Proyek 1", updated: Date.now() }]);
+      await switchTo(nid, defaultProject);
+      return;
+    }
+    setList(rest);
+    if (wasCurrent) await switchTo(rest[0].id, loadProject(rest[0].id) ?? defaultProject);
+  };
+
   useEffect(() => {
     (async () => {
-      const saved = loadSavedProject();
-      if (saved) {
-        const hydrated = await hydrateProject(saved);
-        commit({ present: hydrated, past: [], future: [] });
-        // gambar mini dibuat belakangan supaya app cepat terbuka
-        const thumbs = new Map<string, string>();
-        await Promise.all(
-          hydrated.layers.map(async (l) => {
-            if (l.type === "media" && l.src) {
-              const meta = await probe(l.src, l.kind);
-              if (meta.thumb) thumbs.set(l.id, meta.thumb);
-            }
-          }),
-        );
-        if (thumbs.size) {
-          const cur = histRef.current;
-          commit({
-            ...cur,
-            present: {
-              ...cur.present,
-              layers: cur.present.layers.map((l) => (l.type === "media" && thumbs.has(l.id) ? { ...l, thumb: thumbs.get(l.id) } : l)),
-            },
-          });
-        }
-      }
-      setLoaded(true);
+      const { list, currentId: cid } = ensureProjects(uid);
+      listRef.current = list;
+      setProjects(list);
+      currentRef.current = cid;
+      setCurrentIdState(cid);
+      await showProject(loadProject(cid) ?? defaultProject);
       try {
         await navigator.storage?.persist?.();
       } catch {
         /* abaikan */
       }
     })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Simpan otomatis setiap ada perubahan
   useEffect(() => {
-    if (!loaded) return;
-    const t = setTimeout(() => saveProject(project), 400);
+    if (!loaded || !currentId || project === lastSaved.current) return;
+    const t = setTimeout(() => {
+      saveProjectData(currentId, project);
+      lastSaved.current = project;
+      touch(currentId);
+    }, 400);
     return () => clearTimeout(t);
-  }, [project, loaded]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [project, loaded, currentId]);
 
   // ---- Perubahan layer ----
   const patchLayer = (id: string, patch: Record<string, unknown>, key: string) =>
@@ -301,7 +465,14 @@ export const App: React.FC = () => {
       ratio: r,
       layers: p.layers.map((l) =>
         l.type === "text"
-          ? { ...l, x: Math.round(l.x * fx), y: Math.round(l.y * fy), size: Math.max(20, Math.round((l.size * fs) / 5) * 5) }
+          ? {
+              ...l,
+              x: Math.round(l.x * fx),
+              y: Math.round(l.y * fy),
+              size: Math.max(20, Math.round((l.size * fs) / 5) * 5),
+              ...(l.strokeW ? { strokeW: Math.max(1, Math.round(l.strokeW * fs)) } : {}),
+              ...(l.spacing ? { spacing: Math.round(l.spacing * fs) } : {}),
+            }
           : l.type === "media"
             ? { ...l, x: Math.round(l.x * fx), y: Math.round(l.y * fy), width: Math.max(100, Math.round((l.width * fs) / 10) * 10) }
             : l,
@@ -485,28 +656,15 @@ export const App: React.FC = () => {
     }
   };
 
-  const newProject = () => {
-    if (!window.confirm("Mulai proyek baru? Proyek saat ini akan dihapus dari hp.")) return;
-    project.layers.forEach((l) => {
-      if (l.type !== "text") deleteFile(l.fileId ?? l.id);
-    });
-    commit({ present: defaultProject, past: [], future: [] });
-    setSelectedId("");
-    setPanel(null);
-    setExportOpen(false);
-  };
-
   const importProject = () => {
     const p = parseProject(importText);
     if (!p) {
       window.alert("Data proyek tidak valid. Pastikan yang ditempel utuh dan belum diubah.");
       return;
     }
-    apply(() => p);
-    setSelectedId("");
-    setPanel(null);
     setImportText("");
     setExportOpen(false);
+    void createProject(p, nextName("Impor", false));
   };
 
   // ---- Toolbar bawah yang berubah sesuai pilihan ----
@@ -535,6 +693,7 @@ export const App: React.FC = () => {
     tools = [
       back,
       { icon: "pencil", label: "Edit", onClick: () => setPanel("edit") },
+      { icon: "layers", label: "Gaya", onClick: () => setPanel("teksgaya") },
       { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
       { icon: "rotate", label: "Tampilan", onClick: () => setPanel("gaya") },
       { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
@@ -574,9 +733,15 @@ export const App: React.FC = () => {
     <div className="editor">
       <header className="topbar">
         <h1 className="brand">FROCKSMOTION</h1>
-        <button className="icon-btn xs accent" aria-label="Ekspor" onClick={() => setExportOpen(true)}>
-          <Icon name="export" size={18} />
-        </button>
+        <div className="row">
+          <button className="proj-chip" aria-label="Proyek" onClick={() => setProjectsOpen(true)}>
+            <Icon name="folder" size={16} />
+            <span>{currentName}</span>
+          </button>
+          <button className="icon-btn xs accent" aria-label="Ekspor" onClick={() => setExportOpen(true)}>
+            <Icon name="export" size={18} />
+          </button>
+        </div>
       </header>
 
       <div className="stage" style={{ height: `calc(min(100vw, 560px) * ${ratioInfo.stage})` }}>
@@ -757,30 +922,41 @@ export const App: React.FC = () => {
                     ))}
                   </div>
                   <Slider label="Ukuran huruf" value={selected.size} min={30} max={400} step={5} onChange={(v) => updateLayer({ size: v })} />
-                  <div className="field">
-                    <span className="field-row">
-                      <span>Warna</span>
-                    </span>
-                    <div className="swatches">
-                      {SWATCHES.map((c) => (
-                        <button
-                          key={c}
-                          className="swatch"
-                          aria-label={`Warna ${c}`}
-                          aria-pressed={selected.color.toLowerCase() === c.toLowerCase()}
-                          style={{ background: c }}
-                          onClick={() => updateLayer({ color: c })}
-                        />
-                      ))}
-                      <input
-                        className="swatch-custom"
-                        type="color"
-                        aria-label="Warna lain"
-                        value={selected.color}
-                        onChange={(e) => updateLayer({ color: e.target.value })}
-                      />
-                    </div>
+                  <ColorRow label="Warna" value={selected.color} onChange={(c) => updateLayer({ color: c })} />
+                </>
+              )}
+
+              {activePanel === "teksgaya" && selected?.type === "text" && (
+                <>
+                  <div className="seg three">
+                    {(["left", "center", "right"] as const).map((a) => (
+                      <button key={a} aria-pressed={(selected.align ?? "center") === a} onClick={() => updateLayer({ align: a })}>
+                        {a === "left" ? "Kiri" : a === "center" ? "Tengah" : "Kanan"}
+                      </button>
+                    ))}
                   </div>
+                  <div className="grid2">
+                    <Slider label="Jarak huruf" value={selected.spacing ?? 0} min={-10} max={60} onChange={(v) => updateLayer({ spacing: v })} />
+                    <Slider label="Bayangan" unit="%" value={selected.shadow ?? 0} min={0} max={100} step={5} onChange={(v) => updateLayer({ shadow: v })} />
+                  </div>
+                  <div className="grid2">
+                    <Slider label="Garis tepi" value={selected.strokeW ?? 0} min={0} max={40} onChange={(v) => updateLayer({ strokeW: v })} />
+                    <Slider
+                      label="Kotak latar"
+                      unit="%"
+                      value={Math.round((selected.bgOpacity ?? 0) * 100)}
+                      min={0}
+                      max={100}
+                      step={5}
+                      onChange={(v) => updateLayer({ bgOpacity: v / 100 })}
+                    />
+                  </div>
+                  {(selected.strokeW ?? 0) > 0 && (
+                    <ColorRow label="Warna tepi" value={selected.strokeColor ?? "#000000"} onChange={(c) => updateLayer({ strokeColor: c })} />
+                  )}
+                  {(selected.bgOpacity ?? 0) > 0 && (
+                    <ColorRow label="Warna kotak" value={selected.bgColor ?? "#000000"} onChange={(c) => updateLayer({ bgColor: c })} />
+                  )}
                 </>
               )}
 
@@ -894,6 +1070,47 @@ export const App: React.FC = () => {
 
       {toast && <div className="toast">{toast}</div>}
 
+      {projectsOpen && (
+        <div className="sheet-backdrop" onClick={() => setProjectsOpen(false)}>
+          <div className="sheet" role="dialog" aria-label="Proyek" onClick={(e) => e.stopPropagation()}>
+            <div className="section-head">
+              <h2 style={{ fontFamily: "var(--font-brand)", fontSize: 18 }}>Proyek</h2>
+              <button className="icon-btn sm" aria-label="Tutup" onClick={() => setProjectsOpen(false)}>
+                <Icon name="close" size={18} />
+              </button>
+            </div>
+            <button className="btn primary" onClick={() => void createProject()}>
+              <Icon name="plus" size={18} />
+              Proyek baru
+            </button>
+            <div className="proj-list">
+              {projects.map((m) => {
+                const d = m.id === currentId ? project : loadProject(m.id);
+                return (
+                  <div key={m.id} className={`proj-row${m.id === currentId ? " cur" : ""}`}>
+                    <button className="proj-main" onClick={() => void openProject(m.id)}>
+                      <b>{m.name}</b>
+                      <small>
+                        {ago(m.updated)}, {d?.duration ?? 0} dtk, {d?.ratio ?? "16:9"}, {d?.layers.length ?? 0} layer
+                      </small>
+                    </button>
+                    <button className="icon-btn sm" aria-label={`Ganti nama ${m.name}`} onClick={() => renameProject(m.id)}>
+                      <Icon name="pencil" size={16} />
+                    </button>
+                    <button className="icon-btn sm" aria-label={`Gandakan ${m.name}`} onClick={() => duplicateProject(m.id)}>
+                      <Icon name="copy" size={16} />
+                    </button>
+                    <button className="icon-btn sm" aria-label={`Hapus ${m.name}`} onClick={() => void deleteProject(m.id)}>
+                      <Icon name="trash" size={16} />
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
       {exportOpen && (
         <div className="sheet-backdrop" onClick={() => setExportOpen(false)}>
           <div className="sheet" role="dialog" aria-label="Ekspor dan proyek" onClick={(e) => e.stopPropagation()}>
@@ -919,8 +1136,8 @@ export const App: React.FC = () => {
             </div>
 
             <div>
-              <h3>Muat dari data</h3>
-              <p className="hint">Proyek tersimpan otomatis di hp ini. Tempel data yang pernah disalin untuk memuatnya.</p>
+              <h3>Buat proyek dari data</h3>
+              <p className="hint">Tempel data yang pernah disalin. Hasilnya menjadi proyek baru di daftar Proyek.</p>
               <textarea
                 className="input"
                 rows={3}
@@ -929,14 +1146,9 @@ export const App: React.FC = () => {
                 onChange={(e) => setImportText(e.target.value)}
               />
               <button className="btn" style={{ marginTop: 10 }} onClick={importProject} disabled={!importText.trim()}>
-                Muat data
+                Buat proyek
               </button>
             </div>
-
-            <button className="btn danger" onClick={newProject}>
-              <Icon name="trash" size={18} />
-              Proyek baru
-            </button>
           </div>
         </div>
       )}
