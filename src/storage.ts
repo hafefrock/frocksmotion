@@ -152,7 +152,8 @@ export function ensureProjects(newId: () => string): { list: ProjectMeta[]; curr
   return { list, currentId };
 }
 
-const fileIdsOf = (p: Project): string[] => p.layers.flatMap((l) => (l.type === "text" ? [] : [l.fileId ?? l.id]));
+const fileIdsOf = (p: Project): string[] =>
+  p.layers.flatMap((l) => (l.type === "media" || l.type === "audio" ? [l.fileId ?? l.id] : []));
 
 // Hapus file media milik sebuah proyek, kecuali yang masih dipakai proyek lain
 export async function deleteUnusedFiles(project: Project, others: Project[]): Promise<void> {
@@ -164,7 +165,7 @@ export async function deleteUnusedFiles(project: Project, others: Project[]): Pr
 export async function hydrateProject(p: Project): Promise<Project> {
   const layers = await Promise.all(
     p.layers.map(async (l) => {
-      if (l.type === "text") return l;
+      if (l.type !== "media" && l.type !== "audio") return l;
       const blob = await getFile(l.fileId ?? l.id);
       return blob ? { ...l, src: URL.createObjectURL(blob) } : l;
     }),

@@ -22,10 +22,13 @@ import {
   FPS,
   Layer,
   MediaLayer,
+  Motion,
   Project,
+  ShapeLayer,
   TextLayer,
   canvasOf,
 } from "./types";
+import { ShapeSvg } from "./Shape";
 
 export type VideoProps = { project: Project; scale: number };
 
@@ -66,6 +69,28 @@ const animStyle = (anim: Anim, frame: number, fps: number, durFrames: number, ou
     });
   }
   return { opacity, transform: `translate(${tx}px, ${ty}px) scale(${scale})` };
+};
+
+// Gerak pelan (ala dokumenter) selama layer tampil
+const motionStyle = (m: Motion, frame: number, durFrames: number): React.CSSProperties => {
+  const p = interpolate(frame, [0, Math.max(1, durFrames)], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+    easing: Easing.inOut(Easing.quad),
+  });
+  if (m === "zoomIn") return { transform: `scale(${1 + 0.2 * p})` };
+  if (m === "zoomOut") return { transform: `scale(${1.2 - 0.2 * p})` };
+  if (m === "panLeft") return { transform: `scale(1.15) translateX(${6 - 12 * p}%)` };
+  if (m === "panRight") return { transform: `scale(1.15) translateX(${-6 + 12 * p}%)` };
+  return {};
+};
+
+// Volume dengan masuk dan keluar perlahan. Frame `f` dihitung dari awal klip yang tampil (sudah di luar bagian yang dipotong).
+const fadeVolume = (base: number, fadeIn: number, fadeOut: number, durFrames: number) => (f: number) => {
+  let v = base;
+  if (fadeIn > 0) v *= Math.min(1, Math.max(0, f / (fadeIn * FPS)));
+  if (fadeOut > 0) v *= Math.min(1, Math.max(0, (durFrames - f) / (fadeOut * FPS)));
+  return Math.max(0, Math.min(1, v));
 };
 
 const rgba = (hex: string, a: number) => {
@@ -125,6 +150,23 @@ const MediaItem: React.FC<{ layer: MediaLayer; durFrames: number }> = ({ layer, 
   // Di hp: pakai alamat sementara (src). Saat ekspor: pakai file di folder media/ repo.
   const src = layer.src ?? staticFile(layer.name);
   const fill: React.CSSProperties = { width: "100%", height: "auto", display: "block" };
+  const startFrom = Math.round(layer.trim * FPS);
+  const motion = layer.motion ?? "none";
+  const content = (
+    <div style={{ transform: layer.flip ? "scaleX(-1)" : undefined }}>
+      {layer.kind === "image" ? (
+        <Img src={src} style={fill} />
+      ) : (
+        <OffthreadVideo
+          src={src}
+          startFrom={startFrom}
+          playbackRate={layer.speed ?? 1}
+          volume={fadeVolume(layer.volume ?? 1, layer.fadeIn ?? 0, layer.fadeOut ?? 0, durFrames)}
+          style={fill}
+        />
+      )}
+    </div>
+  );
   return (
     <div
       style={{
@@ -137,29 +179,71 @@ const MediaItem: React.FC<{ layer: MediaLayer; durFrames: number }> = ({ layer, 
       }}
     >
       <div style={animStyle(layer.anim ?? "none", frame, fps, durFrames, !!layer.animOut)}>
+        {motion === "none" ? (
+          content
+        ) : (
+          <div style={{ overflow: "hidden" }}>
+            <div style={motionStyle(motion, frame, durFrames)}>{content}</div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+const ShapeItem: React.FC<{ layer: ShapeLayer; durFrames: number }> = ({ layer, durFrames }) => {
+  const frame = useCurrentFrame();
+  const { fps } = useVideoConfig();
+  return (
+    <div
+      style={{
+        position: "absolute",
+        left: layer.x,
+        top: layer.y,
+        width: layer.width,
+        height: layer.height,
+        opacity: layer.opacity ?? 1,
+        transform: `translate(-50%, -50%) rotate(${layer.rotation ?? 0}deg)`,
+      }}
+    >
+      <div style={animStyle(layer.anim ?? "none", frame, fps, durFrames, !!layer.animOut)}>
         <div style={{ transform: layer.flip ? "scaleX(-1)" : undefined }}>
-          {layer.kind === "image" ? (
-            <Img src={src} style={fill} />
-          ) : (
-            <OffthreadVideo src={src} startFrom={Math.round(layer.trim * FPS)} volume={layer.volume ?? 1} style={fill} />
-          )}
+          <ShapeSvg
+            shape={layer.shape}
+            width={layer.width}
+            height={layer.height}
+            fill={layer.fill}
+            strokeW={layer.strokeW}
+            strokeColor={layer.strokeColor}
+            radius={layer.radius}
+          />
         </div>
       </div>
     </div>
   );
 };
 
-const AudioItem: React.FC<{ layer: AudioLayer }> = ({ layer }) => (
-  <Audio src={layer.src ?? staticFile(layer.name)} startFrom={Math.round(layer.trim * FPS)} volume={layer.volume} />
-);
+const AudioItem: React.FC<{ layer: AudioLayer; durFrames: number }> = ({ layer, durFrames }) => {
+  const startFrom = Math.round(layer.trim * FPS);
+  return (
+    <Audio
+      src={layer.src ?? staticFile(layer.name)}
+      startFrom={startFrom}
+      playbackRate={layer.speed ?? 1}
+      volume={fadeVolume(layer.volume, layer.fadeIn ?? 0, layer.fadeOut ?? 0, durFrames)}
+    />
+  );
+};
 
 const Item: React.FC<{ layer: Layer; durFrames: number; cw: number }> = ({ layer, durFrames, cw }) =>
   layer.type === "text" ? (
     <TextItem layer={layer} durFrames={durFrames} cw={cw} />
   ) : layer.type === "media" ? (
     <MediaItem layer={layer} durFrames={durFrames} />
+  ) : layer.type === "shape" ? (
+    <ShapeItem layer={layer} durFrames={durFrames} />
   ) : (
-    <AudioItem layer={layer} />
+    <AudioItem layer={layer} durFrames={durFrames} />
   );
 
 // Tahan render sampai semua font siap, supaya hasil ekspor memakai huruf yang benar

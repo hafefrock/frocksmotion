@@ -24,7 +24,11 @@ const measureText = (l: TextLayer, cw: number) => {
 
 // Kotak pembatas layer di koordinat kanvas
 const boxOf = (l: VisualLayer, cw: number) =>
-  l.type === "text" ? measureText(l, cw) : { w: l.width, h: l.width * (l.aspect ?? 9 / 16) };
+  l.type === "text"
+    ? measureText(l, cw)
+    : l.type === "shape"
+      ? { w: l.width, h: l.height }
+      : { w: l.width, h: l.width * (l.aspect ?? 9 / 16) };
 
 const normDeg = (d: number) => {
   let r = ((((d + 180) % 360) + 360) % 360) - 180;
@@ -34,7 +38,7 @@ const normDeg = (d: number) => {
 
 type Gesture =
   | { mode: "move"; id: string; startX: number; startY: number; x0: number; y0: number }
-  | { mode: "pinch"; id: string; dist0: number; size0: number; ang0: number; rot0: number };
+  | { mode: "pinch"; id: string; dist0: number; size0: number; h0: number; ang0: number; rot0: number };
 
 // Lapisan di atas preview: ketuk untuk memilih, seret untuk memindah, cubit untuk ukuran, putar dua jari untuk memutar
 export const PreviewOverlay: React.FC<{
@@ -104,6 +108,7 @@ export const PreviewOverlay: React.FC<{
         id: selected.id,
         dist0: Math.hypot(a.x - b.x, a.y - b.y) || 1,
         size0: selected.type === "text" ? selected.size : selected.width,
+        h0: selected.type === "shape" ? selected.height : 0,
         ang0: angleOf(a, b),
         rot0: selected.rotation ?? 0,
       };
@@ -156,6 +161,16 @@ export const PreviewOverlay: React.FC<{
       const layer = layers.find((l) => l.id === g.id);
       if (layer?.type === "text") {
         onChange(g.id, { size: clamp(Math.round((g.size0 * ratio) / 5) * 5, 20, 800), rotation }, `pinch:${g.id}`);
+      } else if (layer?.type === "shape") {
+        onChange(
+          g.id,
+          {
+            width: clamp(Math.round((g.size0 * ratio) / 10) * 10, 20, canvas.w * 2),
+            height: clamp(Math.round(g.h0 * ratio), 4, canvas.h * 2),
+            rotation,
+          },
+          `pinch:${g.id}`,
+        );
       } else if (layer?.type === "media") {
         onChange(g.id, { width: clamp(Math.round((g.size0 * ratio) / 10) * 10, 100, canvas.w * 2), rotation }, `pinch:${g.id}`);
       }

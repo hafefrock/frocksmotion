@@ -7,6 +7,8 @@ export const canvasOf = (r?: Ratio) =>
   r === "9:16" ? { w: 1440, h: 2560 } : r === "1:1" ? { w: 1440, h: 1440 } : { w: 2560, h: 1440 };
 
 export type Anim = "none" | "fade" | "slideUp" | "slideLeft" | "zoom" | "pop";
+export type Motion = "none" | "zoomIn" | "zoomOut" | "panLeft" | "panRight"; // gerak pelan pada gambar/video
+export type ShapeKind = "rect" | "circle" | "triangle" | "star" | "heart" | "arrow" | "line";
 export type FontId = "manrope" | "syne" | "playfair" | "bebas" | "caveat" | "mono";
 
 export type TextLayer = {
@@ -49,6 +51,10 @@ export type MediaLayer = {
   width: number; // lebar di koordinat 2K, tinggi mengikuti rasio asli
   trim: number; // potong bagian awal klip (detik)
   volume?: number; // 0..1, hanya untuk video (bawaan 1)
+  speed?: number; // kecepatan putar video, bawaan 1
+  fadeIn?: number; // detik, suara masuk perlahan (video)
+  fadeOut?: number; // detik, suara keluar perlahan (video)
+  motion?: Motion; // gerak pelan selama layer tampil
   rotation?: number; // derajat
   opacity?: number; // 0..1, bawaan 1
   flip?: boolean; // balik horizontal
@@ -66,13 +72,37 @@ export type AudioLayer = {
   src?: string;
   mediaDuration?: number;
   volume: number; // 0..1
+  speed?: number; // kecepatan putar, bawaan 1
+  fadeIn?: number; // detik
+  fadeOut?: number; // detik
   trim: number; // potong bagian awal klip (detik)
   start: number;
   duration: number;
 };
 
-export type Layer = TextLayer | MediaLayer | AudioLayer;
-export type VisualLayer = TextLayer | MediaLayer;
+export type ShapeLayer = {
+  type: "shape";
+  id: string;
+  shape: ShapeKind;
+  x: number; // posisi tengah, koordinat kanvas
+  y: number;
+  width: number;
+  height: number;
+  fill: string;
+  strokeW?: number; // tebal garis tepi, 0 = tanpa
+  strokeColor?: string;
+  radius?: number; // kebulatan sudut kotak, 0..100
+  rotation?: number; // derajat
+  opacity?: number; // 0..1, bawaan 1
+  flip?: boolean; // balik horizontal
+  anim?: Anim; // bawaan: none
+  animOut?: boolean;
+  start: number;
+  duration: number;
+};
+
+export type Layer = TextLayer | MediaLayer | AudioLayer | ShapeLayer;
+export type VisualLayer = TextLayer | MediaLayer | ShapeLayer;
 
 export const isVisual = (l: Layer): l is VisualLayer => l.type !== "audio";
 

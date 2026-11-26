@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { PlayerRef } from "@remotion/player";
 import { Icon } from "./icons";
+import { shapeLabel } from "./Shape";
 import { FPS, Layer } from "./types";
 
 const ZOOMS = [30, 60, 100, 160]; // piksel per detik
@@ -9,8 +10,17 @@ const round1 = (n: number) => Math.round(n * 10) / 10;
 const clamp = (n: number, a: number, b: number) => Math.min(b, Math.max(a, n));
 
 export const kindClass = (l: Layer) =>
-  l.type === "text" ? "k-text" : l.type === "audio" ? "k-audio" : l.kind === "video" ? "k-video" : "k-image";
-export const layerName = (l: Layer) => (l.type === "text" ? l.text.split("\n")[0] || "(teks kosong)" : l.name);
+  l.type === "text"
+    ? "k-text"
+    : l.type === "audio"
+      ? "k-audio"
+      : l.type === "shape"
+        ? "k-shape"
+        : l.kind === "video"
+          ? "k-video"
+          : "k-image";
+export const layerName = (l: Layer) =>
+  l.type === "text" ? l.text.split("\n")[0] || "(teks kosong)" : l.type === "shape" ? shapeLabel(l.shape) : l.name;
 
 type Drag = {
   id: string;
@@ -140,8 +150,9 @@ export const Timeline: React.FC<{
     const l = d.layer;
     const dx = (e.clientX - d.startX) / pps;
     const hasTrim = l.type === "audio" || (l.type === "media" && l.kind === "video");
-    const trim0 = l.type === "text" ? 0 : l.trim;
-    const mediaDur = l.type === "text" ? undefined : l.mediaDuration;
+    const trim0 = l.type === "audio" || l.type === "media" ? l.trim : 0;
+    const mediaDur = l.type === "audio" || l.type === "media" ? l.mediaDuration : undefined;
+    const speed = hasTrim && (l.type === "audio" || l.type === "media") ? l.speed ?? 1 : 1;
 
     if (d.mode === "move") {
       const v = round1(clamp(l.start + dx, 0, Math.max(0, duration - l.duration)));
@@ -150,20 +161,20 @@ export const Timeline: React.FC<{
         onChange(d.id, { start: v }, `drag:${d.id}`);
       }
     } else if (d.mode === "right") {
-      const mediaLimit = hasTrim && mediaDur ? mediaDur - trim0 : Infinity;
+      const mediaLimit = hasTrim && mediaDur ? (mediaDur - trim0) / speed : Infinity;
       const v = round1(clamp(l.duration + dx, 0.5, Math.max(0.5, Math.min(duration - l.start, mediaLimit))));
       if (v !== d.last) {
         d.last = v;
         onChange(d.id, { duration: v }, `drag:${d.id}`);
       }
     } else {
-      const minStart = hasTrim ? Math.max(0, l.start - trim0) : 0;
+      const minStart = hasTrim ? Math.max(0, l.start - trim0 / speed) : 0;
       const v = round1(clamp(l.start + dx, minStart, l.start + l.duration - 0.5));
       if (v !== d.last) {
         d.last = v;
         const delta = v - l.start;
         const patch: Record<string, unknown> = { start: v, duration: round1(l.duration - delta) };
-        if (hasTrim) patch.trim = round1(Math.max(0, trim0 + delta));
+        if (hasTrim) patch.trim = round1(Math.max(0, trim0 + delta * speed));
         onChange(d.id, patch, `drag:${d.id}`);
       }
     }

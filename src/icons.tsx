@@ -108,6 +108,20 @@ const paths = {
       <path d="M3 13l9 5 9-5" />
     </>
   ),
+  shapes: (
+    <>
+      <rect x="3" y="12" width="9" height="9" rx="1.5" />
+      <circle cx="16.5" cy="7.5" r="4.5" />
+      <path d="M13 21l4-7 4 7z" />
+    </>
+  ),
+  speed: (
+    <>
+      <path d="M4.5 17a8.5 8.5 0 1 1 15 0" />
+      <path d="M12 14l4-5" />
+      <circle cx="12" cy="15" r="1.2" />
+    </>
+  ),
   export: (
     <>
       <path d="M12 15V4M8 8l4-4 4 4" />
