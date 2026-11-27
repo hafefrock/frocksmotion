@@ -28,6 +28,14 @@ jobs:
           if [ ! -d android ]; then npx cap add android; fi
           npx cap sync android
 
+      # Ikon dan layar pembuka dibuat dari kode. Kalau langkah ini gagal, APK tetap dibangun dengan ikon bawaan.
+      - name: Ikon dan layar pembuka
+        continue-on-error: true
+        run: |
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install pillow
+          /tmp/venv/bin/python scripts/android-assets.py android/app/src/main/res
+
       - name: Build APK debug
         working-directory: android
         run: |
