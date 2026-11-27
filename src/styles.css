@@ -914,3 +914,30 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--muted);
   font-size: 12px;
 }
+
+/* ---------- Bentuk, kecepatan, gerak ---------- */
+:root {
+  --c-shape: #ff7ab0;
+}
+
+.k-shape {
+  background: var(--c-shape);
+}
+
+.chip.shape-chip {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 8px 6px 6px;
+  min-height: 64px;
+}
+
+.chip.shape-chip small {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.chip-grid.five {
+  grid-template-columns: repeat(5, 1fr);
+}

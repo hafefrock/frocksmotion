@@ -4,6 +4,7 @@ import { FONTS } from "./fonts";
 import { Icon, IconName } from "./icons";
 import { probe } from "./media";
 import { PreviewOverlay } from "./PreviewOverlay";
+import { SHAPES, ShapeSvg } from "./Shape";
 import { Timeline } from "./Timeline";
 import { Video } from "./Video";
 import {
@@ -28,8 +29,11 @@ import {
   FPS,
   Layer,
   MediaLayer,
+  Motion,
   Project,
   Ratio,
+  ShapeKind,
+  ShapeLayer,
   TextLayer,
   canvasOf,
   defaultProject,
@@ -64,11 +68,35 @@ const ANIMS: { id: Anim; label: string }[] = [
   { id: "pop", label: "Pop" },
 ];
 
+const MOTIONS: { id: Motion; label: string }[] = [
+  { id: "none", label: "Tanpa" },
+  { id: "zoomIn", label: "Zoom masuk" },
+  { id: "zoomOut", label: "Zoom keluar" },
+  { id: "panLeft", label: "Geser kiri" },
+  { id: "panRight", label: "Geser kanan" },
+];
+
+const SPEEDS = [0.5, 1, 1.5, 2, 3];
+
 const uid = () => Math.random().toString(36).slice(2, 9);
 const round1 = (n: number) => Math.round(n * 10) / 10;
 const half = (n: number) => Math.max(0.5, Math.round(n * 2) / 2);
 
-type Panel = "edit" | "ukuran" | "posisi" | "waktu" | "durasi" | "anim" | "volume" | "latar" | "rasio" | "gaya" | "teksgaya";
+type Panel =
+  | "edit"
+  | "ukuran"
+  | "posisi"
+  | "waktu"
+  | "durasi"
+  | "anim"
+  | "volume"
+  | "latar"
+  | "rasio"
+  | "gaya"
+  | "teksgaya"
+  | "bentuk"
+  | "tambahbentuk"
+  | "kecepatan";
 type Hist = { present: Project; past: Project[]; future: Project[] };
 
 const PANEL_TITLE: Record<Panel, string> = {
@@ -83,6 +111,9 @@ const PANEL_TITLE: Record<Panel, string> = {
   rasio: "Rasio video",
   gaya: "Tampilan",
   teksgaya: "Gaya teks",
+  bentuk: "Bentuk",
+  tambahbentuk: "Tambah bentuk",
+  kecepatan: "Kecepatan",
 };
 
 const fmt = (s: number) => {
@@ -247,7 +278,8 @@ export const App: React.FC = () => {
   const currentName = projects.find((m) => m.id === currentId)?.name ?? "Proyek";
 
   const selected = project.layers.find((l) => l.id === selectedId);
-  const activePanel: Panel | null = panel === "durasi" || panel === "latar" || panel === "rasio" || (panel && selected) ? panel : null;
+  const activePanel: Panel | null =
+    panel === "durasi" || panel === "latar" || panel === "rasio" || panel === "tambahbentuk" || (panel && selected) ? panel : null;
 
   // ---- Riwayat (undo/redo) ----
   const commit = (h: Hist) => {
@@ -475,7 +507,16 @@ export const App: React.FC = () => {
             }
           : l.type === "media"
             ? { ...l, x: Math.round(l.x * fx), y: Math.round(l.y * fy), width: Math.max(100, Math.round((l.width * fs) / 10) * 10) }
-            : l,
+            : l.type === "shape"
+              ? {
+                  ...l,
+                  x: Math.round(l.x * fx),
+                  y: Math.round(l.y * fy),
+                  width: Math.max(10, Math.round((l.width * fs) / 10) * 10),
+                  height: Math.max(4, Math.round(l.height * fs)),
+                  ...(l.strokeW ? { strokeW: Math.max(1, Math.round(l.strokeW * fs)) } : {}),
+                }
+              : l,
       ),
     }));
   };
@@ -520,6 +561,47 @@ export const App: React.FC = () => {
     apply((p) => ({ ...p, layers: [...p.layers, layer] }));
     setSelectedId(layer.id);
     setPanel("edit");
+  };
+
+  const addShape = (kind: ShapeKind) => {
+    const def = SHAPES.find((x) => x.id === kind) ?? SHAPES[0];
+    const f = Math.min(1, (canvas.w * 0.45) / def.w);
+    const layer: ShapeLayer = {
+      type: "shape",
+      id: uid(),
+      shape: kind,
+      x: canvas.w / 2,
+      y: canvas.h / 2,
+      width: Math.max(10, Math.round((def.w * f) / 10) * 10),
+      height: Math.max(8, Math.round(def.h * f)),
+      fill: "#ff4f8b",
+      anim: "none",
+      start: playheadSec(),
+      duration: 2,
+    };
+    layer.duration = Math.max(0.5, Math.min(2, round1(project.duration - layer.start)));
+    apply((p) => ({ ...p, layers: [...p.layers, layer] }));
+    setSelectedId(layer.id);
+    setPanel("bentuk");
+  };
+
+  // Ubah kecepatan klip: bagian klip asli yang dipakai tetap sama, jadi lama tampil ikut berubah
+  const setSpeed = (v: number) => {
+    const next = Math.min(4, Math.max(0.25, Math.round(v * 100) / 100));
+    apply(
+      (p) => ({
+        ...p,
+        layers: p.layers.map((l) => {
+          if (l.id !== selectedId || (l.type !== "media" && l.type !== "audio")) return l;
+          const old = l.speed ?? 1;
+          let dur = (l.duration * old) / next;
+          dur = Math.min(dur, p.duration - l.start);
+          if (l.mediaDuration) dur = Math.min(dur, (l.mediaDuration - l.trim) / next);
+          return { ...l, speed: next, duration: Math.max(0.5, round1(dur)) };
+        }),
+      }),
+      `${selectedId}:speed`,
+    );
   };
 
   const addMedia = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -629,7 +711,7 @@ export const App: React.FC = () => {
     const first = { ...selected, duration: round1(t - selected.start) } as Layer;
     const second = { ...selected, id: uid(), start: t, duration: round1(end - t) } as Layer;
     if ((second.type === "media" && second.kind === "video") || second.type === "audio") {
-      second.trim = round1(second.trim + (t - selected.start));
+      second.trim = round1(second.trim + (t - selected.start) * (second.speed ?? 1));
     }
     apply((p) => {
       const i = p.layers.findIndex((l) => l.id === selected.id);
@@ -642,7 +724,7 @@ export const App: React.FC = () => {
 
   // ---- Ekspor dan proyek ----
   const exportJson = serializeProject(project);
-  const missingMedia = project.layers.filter((l) => l.type !== "text" && !l.src);
+  const missingMedia = project.layers.filter((l) => (l.type === "media" || l.type === "audio") && !l.src);
   const selectedIndex = project.layers.findIndex((l) => l.id === selectedId);
 
   const copyExport = async () => {
@@ -683,6 +765,7 @@ export const App: React.FC = () => {
   if (!selected) {
     tools = [
       { icon: "text", label: "Teks", onClick: addText },
+      { icon: "shapes", label: "Bentuk", onClick: () => setPanel("tambahbentuk") },
       { icon: "media", label: "Media", file: "media" },
       { icon: "music", label: "Audio", file: "audio" },
       { icon: "palette", label: "Latar", onClick: () => setPanel("latar") },
@@ -706,7 +789,25 @@ export const App: React.FC = () => {
     tools = [
       back,
       { icon: "resize", label: "Ukuran", onClick: () => setPanel("ukuran") },
-      ...(selected.kind === "video" ? [{ icon: "volume", label: "Volume", onClick: () => setPanel("volume") } as Tool] : []),
+      ...(selected.kind === "video"
+        ? [
+            { icon: "volume", label: "Volume", onClick: () => setPanel("volume") } as Tool,
+            { icon: "speed", label: "Kecepatan", onClick: () => setPanel("kecepatan") } as Tool,
+          ]
+        : []),
+      { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
+      { icon: "rotate", label: "Tampilan", onClick: () => setPanel("gaya") },
+      { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
+      { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
+      ...editTools,
+      ...stackTools,
+      deleteTool,
+    ];
+  } else if (selected.type === "shape") {
+    tools = [
+      back,
+      { icon: "shapes", label: "Bentuk", onClick: () => setPanel("bentuk") },
+      { icon: "resize", label: "Ukuran", onClick: () => setPanel("ukuran") },
       { icon: "sparkles", label: "Animasi", onClick: () => setPanel("anim") },
       { icon: "rotate", label: "Tampilan", onClick: () => setPanel("gaya") },
       { icon: "move", label: "Posisi", onClick: () => setPanel("posisi") },
@@ -719,6 +820,7 @@ export const App: React.FC = () => {
     tools = [
       back,
       { icon: "volume", label: "Volume", onClick: () => setPanel("volume") },
+      { icon: "speed", label: "Kecepatan", onClick: () => setPanel("kecepatan") },
       { icon: "clock", label: "Waktu", onClick: () => setPanel("waktu") },
       ...editTools,
       deleteTool,
@@ -977,6 +1079,86 @@ export const App: React.FC = () => {
                   <button className="chip wide" aria-pressed={!!visualSel.animOut} onClick={() => updateLayer({ animOut: !visualSel.animOut })}>
                     Pudar di akhir
                   </button>
+                  {visualSel.type === "media" && (
+                    <>
+                      <div className="field">
+                        <span className="field-row">
+                          <span>Gerak pelan</span>
+                        </span>
+                      </div>
+                      <div className="chip-grid">
+                        {MOTIONS.map((m) => (
+                          <button
+                            key={m.id}
+                            className="chip"
+                            aria-pressed={(visualSel.motion ?? "none") === m.id}
+                            onClick={() => updateLayer({ motion: m.id })}
+                          >
+                            {m.label}
+                          </button>
+                        ))}
+                      </div>
+                    </>
+                  )}
+                </>
+              )}
+
+              {activePanel === "tambahbentuk" && (
+                <div className="chip-grid">
+                  {SHAPES.map((sh) => (
+                    <button key={sh.id} className="chip shape-chip" onClick={() => addShape(sh.id)}>
+                      <ShapeSvg shape={sh.id} width={sh.id === "line" ? 44 : 32} height={sh.id === "line" ? 6 : 28} fill="currentColor" />
+                      <small>{sh.label}</small>
+                    </button>
+                  ))}
+                </div>
+              )}
+
+              {activePanel === "bentuk" && selected?.type === "shape" && (
+                <>
+                  <div className="chip-grid">
+                    {SHAPES.map((sh) => (
+                      <button
+                        key={sh.id}
+                        className="chip shape-chip"
+                        aria-pressed={selected.shape === sh.id}
+                        onClick={() => updateLayer({ shape: sh.id })}
+                      >
+                        <ShapeSvg shape={sh.id} width={sh.id === "line" ? 44 : 32} height={sh.id === "line" ? 6 : 28} fill="currentColor" />
+                        <small>{sh.label}</small>
+                      </button>
+                    ))}
+                  </div>
+                  <ColorRow label="Warna isi" value={selected.fill} onChange={(c) => updateLayer({ fill: c })} />
+                  <div className="grid2">
+                    <Slider label="Garis tepi" value={selected.strokeW ?? 0} min={0} max={40} onChange={(v) => updateLayer({ strokeW: v })} />
+                    {selected.shape === "rect" && (
+                      <Slider label="Sudut bulat" unit="%" value={selected.radius ?? 0} min={0} max={100} step={5} onChange={(v) => updateLayer({ radius: v })} />
+                    )}
+                  </div>
+                  {(selected.strokeW ?? 0) > 0 && (
+                    <ColorRow label="Warna tepi" value={selected.strokeColor ?? "#000000"} onChange={(c) => updateLayer({ strokeColor: c })} />
+                  )}
+                </>
+              )}
+
+              {activePanel === "ukuran" && selected?.type === "shape" && (
+                <div className="grid2">
+                  <Slider label="Lebar" value={selected.width} min={10} max={canvas.w} step={10} onChange={(v) => updateLayer({ width: v })} />
+                  <Slider label="Tinggi" value={selected.height} min={4} max={canvas.h} step={4} onChange={(v) => updateLayer({ height: v })} />
+                </div>
+              )}
+
+              {activePanel === "kecepatan" && volumeSel && (
+                <>
+                  <div className="chip-grid five">
+                    {SPEEDS.map((v) => (
+                      <button key={v} className="chip" aria-pressed={(volumeSel.speed ?? 1) === v} onClick={() => setSpeed(v)}>
+                        {v}x
+                      </button>
+                    ))}
+                  </div>
+                  <Slider label="Kecepatan" unit="x" value={volumeSel.speed ?? 1} min={0.25} max={4} step={0.05} onChange={setSpeed} />
                 </>
               )}
 
@@ -1008,6 +1190,10 @@ export const App: React.FC = () => {
                     step={5}
                     onChange={(v) => updateLayer({ volume: v / 100 })}
                   />
+                  <div className="grid2">
+                    <Slider label="Masuk perlahan" unit=" dtk" value={volumeSel.fadeIn ?? 0} min={0} max={5} step={0.5} onChange={(v) => updateLayer({ fadeIn: v })} />
+                    <Slider label="Keluar perlahan" unit=" dtk" value={volumeSel.fadeOut ?? 0} min={0} max={5} step={0.5} onChange={(v) => updateLayer({ fadeOut: v })} />
+                  </div>
                   {volumeSel.type === "audio" && (
                     <Slider
                       label="Potong awal klip"
